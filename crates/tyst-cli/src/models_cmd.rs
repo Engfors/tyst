@@ -14,6 +14,9 @@ use tyst_core::models::{self, FileStatus, Manifest, ModelFile, ModelSpec, PIANIS
 
 use crate::{EngineArgs, setup};
 
+/// What a plain `models fetch` downloads.
+const DEFAULT_MODELS: [&str; 2] = [PIANISSIMO, SILERO_VAD];
+
 #[derive(Args)]
 pub struct ModelsArgs {
     #[command(subcommand)]
@@ -56,7 +59,13 @@ pub fn run(args: ModelsArgs) -> Result<()> {
         ModelsAction::Verify { full } => {
             let mut bad = 0;
             for (id, spec) in &manifest.models {
-                for (name, status) in models::verify(spec, &dir, full)? {
+                let statuses = models::verify(spec, &dir, full)?;
+                // Models outside the default fetch (Parakeet, for forced English) are optional.
+                if !DEFAULT_MODELS.contains(&id.as_str()) && statuses.iter().all(|(_, s)| *s == FileStatus::Missing) {
+                    println!("{id:<22} not installed (optional: `tyst-cli models fetch {id}`)");
+                    continue;
+                }
+                for (name, status) in statuses {
                     if status != FileStatus::Ok {
                         bad += 1;
                     }
@@ -68,7 +77,7 @@ pub fn run(args: ModelsArgs) -> Result<()> {
             }
         }
         ModelsAction::Fetch { ids } => {
-            let ids = if ids.is_empty() { vec![PIANISSIMO.to_string(), SILERO_VAD.to_string()] } else { ids };
+            let ids = if ids.is_empty() { DEFAULT_MODELS.iter().map(|s| s.to_string()).collect() } else { ids };
             for id in ids {
                 let spec = manifest.get(&id)?;
                 fetch(&id, spec, &dir)?;
