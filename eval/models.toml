@@ -1,0 +1,52 @@
+# Models used by the Phase 0 harness. Downloaded by `python -m tyst_eval fetch-models` into
+# $TYST_MODELS (default ~/.cache/tyst-eval/models). Archive checksums are verified after download.
+# Phase 1 will turn this into the app's pinned model manifest (SPEC 5.2).
+
+[models.pianissimo-sv-int8]
+kind = "asr"
+lang = "sv"
+dir = "pianissimo-sv-onnx"
+hf_repo = "KlangAI/pianissimo-sv-onnx"
+hf_revision = "main"  # TODO: pin a commit once the repo has been inspected
+# Layout is auto-detected: sherpa-onnx (encoder/decoder/joiner + tokens.txt) or
+# onnx-asr (encoder-model + decoder_joint-model + vocab.txt).
+
+[models.parakeet-v3-int8]
+kind = "asr"
+lang = "multi"
+dir = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
+sha256 = "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
+
+[models.silero-vad]
+kind = "vad"
+dir = "silero-vad"
+url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+sha256 = "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
+
+[models.whisper-tiny]
+kind = "lid"
+dir = "sherpa-onnx-whisper-tiny"
+url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2"
+sha256 = "c46116994e539aa165266d96b325252728429c12535eb9d8b6a2b10f129e66b1"
+files = { size = "tiny" }
+
+[models.whisper-base]
+kind = "lid"
+dir = "sherpa-onnx-whisper-base"
+url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-base.tar.bz2"
+sha256 = "911b2083efd7c0dca2ac3b358b75222660dc09fb716d64fbfc417ba6c99ff3de"
+files = { size = "base" }
+
+# Text-to-speech voices, only used by `python -m tyst_eval synth` for smoke-test clips.
+[models.piper-sv]
+kind = "tts"
+dir = "vits-piper-sv_SE-nst-medium"
+url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-sv_SE-nst-medium.tar.bz2"
+sha256 = "5aed0f5ab75135fc3ba6a4f3567e171d72df753305b08a01ca42f79411587f67"
+
+[models.piper-en]
+kind = "tts"
+dir = "vits-piper-en_US-lessac-medium"
+url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2"
+sha256 = "9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e"
