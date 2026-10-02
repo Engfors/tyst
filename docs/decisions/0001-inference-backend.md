@@ -1,33 +1,40 @@
-# 0001 · Inference backend: sherpa-onnx
+# 0001 · Inference backend: ONNX Runtime (`ort`) with a TDT greedy decoder
 
-- **Status:** Proposed (pending Pianissimo load test)
+- **Status:** Proposed
 - **Date:** 2026-10-02
 
 ## Context
 
-SPEC 4.1 names sherpa-onnx (C API or `sherpa-rs`) as the inference backend, with ONNX Runtime via
-the `ort` crate plus a hand-written TDT greedy decoder as the fallback if Pianissimo's ONNX export
-does not load in sherpa-onnx's NeMo transducer loader. The router also needs per-token
-log-probabilities (dual-decode, SPEC 6.3) and contextual biasing (SPEC 9.3).
+SPEC 4.1 names sherpa-onnx as the inference backend, and ONNX Runtime through the `ort` crate with
+a hand-written TDT greedy decoder as the fallback if Pianissimo's ONNX export does not load in
+sherpa-onnx's NeMo transducer loader. Phase 1 must reproduce the Phase 0 WER within 1 pp.
 
 ## Decision
 
-Use **sherpa-onnx** (`model_type = nemo_transducer`) for ASR, Silero VAD and Whisper language ID,
-provided Pianissimo loads in it. If Pianissimo's published export does not, the preferred fix is to
-re-export it into sherpa-onnx's layout from the `.nemo` checkpoint rather than switch backends; the
-`ort` path stays the last resort.
+Use **ONNX Runtime via `ort`** for ASR, with a TDT greedy decoder ported from onnx-asr's NeMo
+implementation (the code the Phase 0 numbers were measured with). Run Silero VAD through `ort`
+too, so there is one native dependency. sherpa-onnx is not used.
 
 ## Consequences
 
-- One native dependency covers ASR, VAD, LID and hotwords; no custom decoder to maintain.
-- Hotwords need a `bpe.vocab`, which NeMo exports lack. The harness derives one from `tokens.txt`
-  (`eval/tyst_eval/engines.py`, `write_bpe_vocab`); Phase 1 must do the same in Rust.
-- Hotword decoding uses `modified_beam_search`, about 35 % slower than greedy on the test box.
+- Pianissimo's published export (`encoder-model`, fused `decoder_joint-model`, `nemo128.onnx`
+  feature extractor, `vocab.txt`) loads as-is. No re-export step and no extra model hosting.
+- We own a small decoder (greedy TDT loop, token/duration argmax, SentencePiece detokenizing).
+  Phase 1 tests it against the harness outputs on the same clips.
+- No hotwords/contextual biasing in v1. The vocabulary replacement rules (SPEC 9.3) still apply;
+  on the owner set they lift exact term spelling to the 76–78 % term recall.
+- Parakeet v3 (only used for forced English, ADR 0002) needs the onnx-asr export of Parakeet,
+  not sherpa-onnx's, so both models share one loader.
 
-## Evidence (Linux container, sherpa-onnx 1.13.8, see docs/phase0-report.md)
+## Alternatives
 
-- Parakeet TDT 0.6B v3 int8 (sherpa-onnx export) loads and decodes; results include
-  `ys_log_probs`, so dual-decode confidence needs no custom decoder.
-- Hotwords work with the NeMo TDT model: "klang björn" → "Klangbjörn" at score 5.
-- **Not yet verified:** Pianissimo, because Hugging Face is unreachable from the build container.
-  The harness auto-detects either layout and reports a load failure in the run summary.
+- **Re-export Pianissimo into sherpa-onnx's layout** from the `.nemo` checkpoint: brings hotwords
+  and sherpa's VAD/LID, but needs NeMo tooling, a self-hosted model artifact, and a new
+  measurement, since it is no longer the export that was evaluated.
+- **sherpa-onnx for Parakeet + `ort` for Pianissimo:** two native stacks for no measured gain.
+
+## Evidence
+
+[Phase 0 report](../phase0-report.md) 3.4 and 3.5: Pianissimo through onnx-asr decodes at RTF 0.032
+(4 threads) on the owner's Linux machine; sherpa-onnx cannot load its layout; Parakeet in
+sherpa-onnx supports hotwords, but hotwords could not be measured for Pianissimo.
