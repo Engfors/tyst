@@ -1,0 +1,37 @@
+[package]
+name = "tyst-app"
+description = "Tyst desktop app: tray, meeting window, onboarding and settings (Tauri v2)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tyst"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+chrono.workspace = true
+env_logger.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tyst-core.workspace = true
+tyst-platform.workspace = true
+tyst-runtime.workspace = true
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+
+[features]
+default = ["mic", "pipewire"]
+mic = ["tyst-platform/mic"]
+pipewire = ["tyst-platform/pipewire"]
+# Set by the Tauri CLI for production builds (frontend embedded instead of the dev server).
+custom-protocol = ["tauri/custom-protocol"]

@@ -19,3 +19,6 @@ __pycache__/
 
 # Rust
 target/
+
+# Tauri app
+app/src-tauri/gen/

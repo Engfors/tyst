@@ -1,0 +1,119 @@
+/* Shared look: system font, follows the OS light/dark setting, subtle motion (SPEC 8.1). */
+:root {
+  color-scheme: light dark;
+  --bg: #f6f6f8;
+  --panel: rgba(250, 250, 252, 0.94);
+  --fg: #1c1d21;
+  --muted: #6b6e78;
+  --faint: #9a9da6;
+  --line: rgba(0, 0, 0, 0.09);
+  --accent: #3b6fe0;
+  --accent-fg: #ffffff;
+  --me: #2f6fd8;
+  --others: #7a4fc9;
+  --rec: #e63946;
+  --pause: #e6a01e;
+  --ok: #2a9d55;
+  --warn: #b85c00;
+  --field: #ffffff;
+  --radius: 12px;
+  --motion: 140ms;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Noto Sans", Ubuntu, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1d21;
+    --panel: rgba(30, 32, 37, 0.94);
+    --fg: #ececf0;
+    --muted: #a0a3ad;
+    --faint: #6f727c;
+    --line: rgba(255, 255, 255, 0.1);
+    --accent: #5b8cf0;
+    --me: #6b9cf0;
+    --others: #b08cf0;
+    --field: #26282d;
+    --warn: #f0a050;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion: 0ms;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--line);
+  background: var(--field);
+  border-radius: 7px;
+  padding: 4px 11px;
+  cursor: default;
+  transition: background var(--motion), opacity var(--motion);
+}
+
+button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--field), var(--fg) 6%);
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+button.primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
+}
+
+button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent), black 10%);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  font: inherit;
+  color: inherit;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 5px 8px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-size: 12px;
+}
