@@ -1,0 +1,18 @@
+# Evaluation data and outputs never go into git (SPEC 4.3, 12): they contain audio and transcripts.
+eval/results/
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.ogg
+*.onnx
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
