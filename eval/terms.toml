@@ -1,0 +1,35 @@
+# Custom vocabulary for Phase 0 (SPEC 9.3). Same shape as the app's vocabulary file.
+# `terms` drive hotword biasing and canonical spelling; term accuracy is measured on these.
+# Owner: extend with the terms that actually occur in your clips (customer names, products).
+
+terms = [
+  "Terraform",
+  "HashiCorp",
+  "Vault",
+  "Kubernetes",
+  "GitHub",
+  "pull request",
+  "pipeline",
+  "deploy",
+  "state drift",
+  "Helm",
+  "staging",
+  "container",
+  "rollback",
+]
+
+[[replacement]]
+from = "terra form"
+to = "Terraform"
+
+[[replacement]]
+from = "hashi corp"
+to = "HashiCorp"
+
+[[replacement]]
+from = "git hub"
+to = "GitHub"
+
+[[replacement]]
+from = "kubernetis"
+to = "Kubernetes"

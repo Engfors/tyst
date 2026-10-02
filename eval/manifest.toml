@@ -1,0 +1,172 @@
+# Phase 0 test set (SPEC 12). Audio and references live OUTSIDE the repo: paths are relative to
+# `clips_root` (override with the TYST_EVAL_CLIPS environment variable). Missing clips are skipped.
+#
+# Per clip:
+#   audio       any format libsndfile reads (wav, flac, ogg, mp3); converted to 16 kHz mono
+#   reference   UTF-8 text, hand-corrected transcript (punctuation/case are ignored for WER)
+#   lang        dominant language, "sv" or "en"
+#   lang_spans  mixed clips only: [start_s, end_s, lang] ranges, so the harness knows which
+#               engine each segment should have gone to. Rough boundaries (±1 s) are fine.
+#
+# Categories: sv · en (incl. Swedish-accented English) · mixed (language switch between
+# speakers) · sv-terms (Swedish with English technical terms inside sentences).
+
+[settings]
+clips_root = "~/tyst-eval/clips"
+
+# Generated sets, created under clips_root by the harness itself.
+[[include]]
+path = "fleurs/manifest.toml"   # python -m tyst_eval fetch-fleurs
+source = "fleurs"
+
+[[include]]
+path = "synth/manifest.toml"    # python -m tyst_eval synth
+source = "synth"
+
+# ---- owner clips: drop files with these names into clips_root/owner/ and edit as needed
+
+[[clip]]
+id = "sv-01"
+category = "sv"
+audio = "owner/sv-01.wav"
+reference = "owner/sv-01.txt"
+lang = "sv"
+
+[[clip]]
+id = "sv-02"
+category = "sv"
+audio = "owner/sv-02.wav"
+reference = "owner/sv-02.txt"
+lang = "sv"
+
+[[clip]]
+id = "sv-03"
+category = "sv"
+audio = "owner/sv-03.wav"
+reference = "owner/sv-03.txt"
+lang = "sv"
+
+[[clip]]
+id = "sv-04"
+category = "sv"
+audio = "owner/sv-04.wav"
+reference = "owner/sv-04.txt"
+lang = "sv"
+
+[[clip]]
+id = "sv-05"
+category = "sv"
+audio = "owner/sv-05.wav"
+reference = "owner/sv-05.txt"
+lang = "sv"
+
+[[clip]]
+id = "en-01"
+category = "en"
+audio = "owner/en-01.wav"
+reference = "owner/en-01.txt"
+lang = "en"
+
+[[clip]]
+id = "en-02"
+category = "en"
+audio = "owner/en-02.wav"
+reference = "owner/en-02.txt"
+lang = "en"
+
+[[clip]]
+id = "en-03"
+category = "en"
+audio = "owner/en-03.wav"
+reference = "owner/en-03.txt"
+lang = "en"
+
+[[clip]]
+id = "en-04"
+category = "en"
+audio = "owner/en-04.wav"
+reference = "owner/en-04.txt"
+lang = "en"
+
+[[clip]]
+id = "en-05"
+category = "en"
+audio = "owner/en-05.wav"
+reference = "owner/en-05.txt"
+lang = "en"
+
+[[clip]]
+id = "mixed-01"
+category = "mixed"
+audio = "owner/mixed-01.wav"
+reference = "owner/mixed-01.txt"
+lang = "sv"
+# lang_spans = [[0.0, 45.0, "sv"], [45.0, 120.0, "en"]]
+
+[[clip]]
+id = "mixed-02"
+category = "mixed"
+audio = "owner/mixed-02.wav"
+reference = "owner/mixed-02.txt"
+lang = "sv"
+# lang_spans = [[0.0, 45.0, "sv"], [45.0, 120.0, "en"]]
+
+[[clip]]
+id = "mixed-03"
+category = "mixed"
+audio = "owner/mixed-03.wav"
+reference = "owner/mixed-03.txt"
+lang = "sv"
+# lang_spans = [[0.0, 45.0, "sv"], [45.0, 120.0, "en"]]
+
+[[clip]]
+id = "mixed-04"
+category = "mixed"
+audio = "owner/mixed-04.wav"
+reference = "owner/mixed-04.txt"
+lang = "sv"
+# lang_spans = [[0.0, 45.0, "sv"], [45.0, 120.0, "en"]]
+
+[[clip]]
+id = "mixed-05"
+category = "mixed"
+audio = "owner/mixed-05.wav"
+reference = "owner/mixed-05.txt"
+lang = "sv"
+# lang_spans = [[0.0, 45.0, "sv"], [45.0, 120.0, "en"]]
+
+[[clip]]
+id = "sv-terms-01"
+category = "sv-terms"
+audio = "owner/sv-terms-01.wav"
+reference = "owner/sv-terms-01.txt"
+lang = "sv"
+
+[[clip]]
+id = "sv-terms-02"
+category = "sv-terms"
+audio = "owner/sv-terms-02.wav"
+reference = "owner/sv-terms-02.txt"
+lang = "sv"
+
+[[clip]]
+id = "sv-terms-03"
+category = "sv-terms"
+audio = "owner/sv-terms-03.wav"
+reference = "owner/sv-terms-03.txt"
+lang = "sv"
+
+[[clip]]
+id = "sv-terms-04"
+category = "sv-terms"
+audio = "owner/sv-terms-04.wav"
+reference = "owner/sv-terms-04.txt"
+lang = "sv"
+
+[[clip]]
+id = "sv-terms-05"
+category = "sv-terms"
+audio = "owner/sv-terms-05.wav"
+reference = "owner/sv-terms-05.txt"
+lang = "sv"
+

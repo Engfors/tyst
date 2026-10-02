@@ -1,0 +1,10 @@
+Innan de andra ansluter, hur ser läget ut med leveransen?
+Det ser bra ut. Vi är klara med det mesta, det som återstår är testerna av betalflödet. De blev försenade eftersom testmiljön låg nere i två dagar förra veckan.
+Hinner ni klart till fredag?
+Jag tror det, om inget nytt dyker upp. Men jag vill inte lova något förrän vi har kört hela testsviten en gång.
+Okej, då säger vi det till kunden. Nu ser jag att de har anslutit, så vi byter till engelska.
+Hi everyone, thanks for joining. We were just going through the status of the delivery.
+Yes, so the short version is that we're almost done. The only part left is testing the payment flow. Our test environment was down for two days last week, so that slipped a little.
+Are we still on track for Friday?
+We think so. We'll run the full test suite tomorrow, and I'll send an update by the end of the day. If anything fails, you'll hear from us right away.
+Great. Then let's talk again on Thursday. Thanks, everyone.
