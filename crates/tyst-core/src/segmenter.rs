@@ -8,6 +8,9 @@
 
 use crate::Result;
 
+/// How much further back than the fixed pre-roll a segment may start, to its speech onset.
+const MAX_ONSET_LOOKBACK: f32 = 0.75;
+
 /// Something that scores fixed-size windows of 16 kHz audio with a speech probability.
 pub trait SpeechDetector: Send {
     /// Samples per call to [`prob`](Self::prob).
@@ -91,6 +94,8 @@ pub struct Segmenter<D: SpeechDetector> {
     /// Start of the open segment.
     start: Option<u64>,
     last_prob: f32,
+    /// Start of the current run of windows above the hysteresis floor (`threshold - 0.15`).
+    onset: Option<u64>,
 }
 
 impl<D: SpeechDetector> Segmenter<D> {
@@ -109,6 +114,7 @@ impl<D: SpeechDetector> Segmenter<D> {
             temp_end: 0,
             start: None,
             last_prob: 0.0,
+            onset: None,
         }
     }
 
@@ -179,6 +185,7 @@ impl<D: SpeechDetector> Segmenter<D> {
         self.temp_start = 0;
         self.temp_end = 0;
         self.start = None;
+        self.onset = None;
         self.detector.reset();
         self.buffer_start += self.buffer.len() as u64;
         self.buffer.clear();
@@ -197,8 +204,19 @@ impl<D: SpeechDetector> Segmenter<D> {
         let prob = self.detector.prob(window)?;
         self.last_prob = prob;
         self.current += window.len() as u64;
+        if prob > self.cfg.threshold - 0.15 {
+            self.onset.get_or_insert(self.current - window.len() as u64);
+        } else {
+            self.onset = None;
+        }
         let is_speech = self.is_speech(prob);
-        let pre_roll = 2 * self.window as u64 + self.secs(self.cfg.min_speech);
+        // Audio kept before the trigger point: the fixed pre-roll, or back to where the speech
+        // run began. sherpa's state machine restarts its min_speech count on any window below
+        // the threshold, so a soft or wavering onset can trigger several hundred ms late and
+        // the fixed pre-roll alone loses the first word.
+        let fixed = 2 * self.window as u64 + self.secs(self.cfg.min_speech);
+        let from_onset = self.onset.map_or(0, |o| self.tail().saturating_sub(o) + 2 * self.window as u64);
+        let pre_roll = fixed.max(from_onset.min(fixed + self.secs(MAX_ONSET_LOOKBACK)));
 
         if is_speech {
             if self.start.is_none() {
@@ -481,5 +499,27 @@ mod tests {
         let pos = seg.position();
         assert!(seg.skip_to(0).is_empty());
         assert_eq!(seg.position(), pos);
+    }
+
+    #[test]
+    fn a_wavering_onset_keeps_the_first_word() {
+        // Speech from 1.0 s whose probability dips into the hysteresis band twice before it
+        // settles: the state machine triggers late, the segment still starts at the onset.
+        let band = |secs: f32| -> Vec<f32> {
+            (0..(secs * SR as f32) as usize).map(|i| (i as f32 * 0.05).sin() * 0.06).collect()
+        };
+        let pcm = [
+            audio(&[(1.0, false), (0.2, true)]),
+            band(0.064),
+            audio(&[(0.2, true)]),
+            band(0.064),
+            audio(&[(2.0, true), (1.0, false)]),
+        ]
+        .concat();
+        let events = run(SegmenterConfig::default(), &pcm);
+        let segs = ended(&events);
+        assert_eq!(segs.len(), 1);
+        assert!(secs(segs[0].start) <= 1.0, "{}", secs(segs[0].start));
+        assert!(secs(segs[0].start) > 0.85, "{}", secs(segs[0].start));
     }
 }
