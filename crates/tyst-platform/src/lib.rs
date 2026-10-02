@@ -1,10 +1,13 @@
 //! Platform layer (SPEC 4.2): OS integrations behind small traits, so the core stays pure.
 //!
-//! Phase 1 only needs microphone capture for `tyst-cli live`. System audio, hotkeys, paste and
-//! window behavior arrive with the app in later phases.
+//! Audio capture: the microphone through cpal (feature `mic`, every platform) and, on Linux,
+//! microphone and system audio through PipeWire (feature `pipewire`). Hotkeys, paste and window
+//! behavior arrive with later phases.
 
 #[cfg(feature = "mic")]
 pub mod mic;
+#[cfg(all(target_os = "linux", feature = "pipewire"))]
+pub mod pipewire;
 
 use std::sync::mpsc::Sender;
 use std::time::Instant;
@@ -37,4 +40,9 @@ pub trait AudioSource {
     fn sample_rate(&self) -> u32;
     /// Human-readable device name, for diagnostics.
     fn device_name(&self) -> String;
+    /// Called about twice a second while capturing, on the thread that started the source: the
+    /// place to recover from a lost device or follow a change of the default device (SPEC 11).
+    fn poll(&mut self) -> Result<(), CaptureError> {
+        Ok(())
+    }
 }

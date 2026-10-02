@@ -10,9 +10,15 @@ license.workspace = true
 default = ["mic"]
 # Microphone capture through cpal (CoreAudio on macOS, ALSA/PipeWire on Linux; needs libasound2-dev to build there).
 mic = ["dep:cpal"]
+# Linux: PipeWire capture of the microphone and of the default output's monitor (system audio).
+# Needs libpipewire-0.3 headers and clang to build (Arch: pipewire, clang; Debian: libpipewire-0.3-dev).
+pipewire = ["dep:pipewire"]
 
 [dependencies]
 cpal = { workspace = true, optional = true }
 log.workspace = true
 tyst-core.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+pipewire = { version = "0.10", optional = true }
