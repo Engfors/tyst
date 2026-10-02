@@ -1,6 +1,6 @@
 # Phase 0 report: model evaluation
 
-- **Status:** Draft for owner review (2026-10-02). Owner test set and FLEURS measured; bench and M1 Max numbers pending.
+- **Status:** Draft for owner review (2026-10-02). Owner test set, FLEURS, Linux and M1 Max benches measured.
 - **Harness:** [`eval/`](../eval/README.md) · **ADRs:** [`docs/decisions/`](decisions/README.md)
 
 ## 1. Summary
@@ -98,7 +98,37 @@ Bench (`python -m tyst_eval bench`, 120 s of speech in 8 s pieces, each configur
   likely cause (inferred, not measured); Phase 1 should check this in the `ort` implementation.
 - Single-threaded RTF is about 0.095, so even on one core a 15 s re-decode takes about 1.4 s.
 
-M1 Max: **not yet measured.**
+M1 Max (macOS 26.6, CPU provider; CoreML not run):
+
+| models loaded | threads | RTF | RSS after load | peak RSS |
+|---|---|---|---|---|
+| Pianissimo | 1 | 0.129 | 1.15 GB | 1.34 GB |
+| Pianissimo | 4 | 0.043 | 1.21 GB | 1.40 GB |
+| Parakeet | 1 | 0.071 | 1.20 GB | 1.31 GB |
+| Parakeet | 4 | 0.031 | 1.24 GB | 1.35 GB |
+| Pianissimo + Parakeet + Whisper tiny | 1 | 0.132 / 0.071 / 0.024 | 2.04 GB | 2.43 GB |
+| Pianissimo + Parakeet + Whisper tiny | 4 | 0.043 / 0.030 / 0.010 | 2.19 GB | 2.53 GB |
+
+- On the Mac, Pianissimo through onnx-asr is slower than Parakeet through sherpa-onnx (0.129 vs
+  0.071 single-threaded), while on Linux they were equal. sherpa-onnx's feature extraction and
+  decoder loop are native, and onnx-asr's run in Python/NumPy, so part of the gap is likely the
+  harness rather than the model (inferred). Phase 1's Rust decoder will show the real number.
+- **Latency target holds:** a full 15 s re-decode takes 0.64 s with 4 threads, under the 1.5 s
+  partial target and the 1.0 s final target.
+- **CPU target is at risk (estimate):** re-decoding the whole growing buffer costs CPU time that
+  grows with segment length. Simulated cores used per second of speech (partials + final decode,
+  single-thread RTF 0.129, the M1 Max number):
+
+  | partial interval | 2 s turn | 4 s turn | 8 s turn | 15 s turn |
+  |---|---|---|---|---|
+  | fixed 0.8 s (SPEC) | 0.28 | 0.39 | 0.84 | 1.31 |
+  | `max(0.8 s, L/2)` | 0.28 | 0.40 | 0.35 | 0.42 |
+  | `max(0.8 s, L)` | 0.28 | 0.31 | 0.32 | 0.34 |
+
+  The SPEC 6.2 target is 30 % of one core on average over a meeting, silence included. Even short
+  turns land near 0.3 cores while someone talks, so the target holds only if speech fills well
+  under the whole meeting, or if the Rust decoder is faster than the onnx-asr harness (Parakeet in
+  sherpa-onnx runs at 0.071 on the same Mac). ADR 0004 proposes `max(0.8 s, L/2)`.
 
 ### 3.5 Backend compatibility
 
@@ -116,12 +146,12 @@ M1 Max: **not yet measured.**
 | Inference backend | ONNX Runtime via `ort`, hand-written TDT greedy decoder ported from onnx-asr; Silero VAD via `ort` | [0001](decisions/0001-inference-backend.md) |
 | Routing | fixed Pianissimo; the user can force English per session, which uses Parakeet v3 | [0002](decisions/0002-routing-strategy.md) |
 | Language ID | none in v1 | [0003](decisions/0003-language-id.md) |
-| Segmentation | SPEC defaults: 500 ms end silence, 15 s force-cut, 300 ms minimum, 800 ms partial interval | [0004](decisions/0004-segmentation.md) |
+| Segmentation | SPEC defaults (500 ms end silence, 15 s force-cut, 300 ms minimum), partial interval `max(0.8 s, L/2)` for buffer length L | [0004](decisions/0004-segmentation.md) |
 
 ## 5. Still open
 
-1. Corrected bench file (RSS of Pianissimo alone and of all models together).
-2. M1 Max run of `bench` (CPU and `--provider coreml`) for the SPEC 6.2 targets.
+1. Owner confirmation of ADRs 0001–0004.
+2. Optional: CoreML execution provider on the M1 Max; not needed for the targets above.
 3. Optional: rerun the owner set with `lang_spans` on the `mixed` clips to get a real wrong-engine rate.
    This only matters if routing is kept.
 
