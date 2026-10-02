@@ -243,7 +243,7 @@ pub fn run(args: BenchArgs) -> Result<()> {
         let (mut decode_s, mut speech_s) = (0.0, 0.0);
         let mut collect = |events: Vec<PipelineEvent>| {
             for e in events {
-                if let PipelineEvent::Final { segment, stats } = e {
+                if let PipelineEvent::Final { segment, stats, .. } = e {
                     decode_s += stats.elapsed.as_secs_f64();
                     speech_s += stats.audio.as_secs_f64();
                     texts.push(segment.text);

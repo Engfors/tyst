@@ -124,7 +124,11 @@ recall is 62 % and exact spelling 62 % overall (sv-terms: 76 %).
 All three Phase 1 targets are met on this machine: WER within 1 pp, partials well under 1.5 s and CPU
 under 30 % of a core. Model load takes 1.0 s.
 
-End-of-speech-to-final latency is mostly waiting, not compute: the final decode takes 0.2–0.7 s, and
-the rest is the segmenter waiting for its end-of-speech silence (ADR 0004). It varies with how the
-speaker pauses (the 4-thread run had 76 s of near-continuous speech and only 6 finals). The SPEC sets
-no target for it; it is worth revisiting with dictation in Phase 2.
+The end-of-speech-to-final column overstates the delay. Both runs had near-continuous speech (66 and
+76 s of speech, only 6 finals each), so most finals came from the 15 s force-cut. A force-cut segment
+ends at its cut point, up to 2 s before the 15 s mark that triggers it, and the live command counted
+that gap as latency. The final decode itself takes 0.2–0.7 s. `live` now leaves force-cut finals
+out of this number and reports how many there were. With pauses between sentences (the FLEURS clip in
+section 3), p95 is 1.0 s at 4 threads, which includes the 0.5 s end-of-speech silence. The SPEC's
+"final text ≤ 1.0 s after end of speech" target (section 6) is not a Phase 1 acceptance item. It
+becomes one for dictation in Phase 2.

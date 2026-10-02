@@ -88,7 +88,11 @@ struct LiveStats {
     /// Capture of the newest audio in a partial -> partial shown (target ≤ 1.5 s).
     partial_latency: stats::Summary,
     /// End of speech -> final shown, including the 0.5 s end-of-speech silence (target ≤ 1.0 s).
+    /// Only segments ended by silence: a force-cut segment ends at its cut point, up to 2 s before
+    /// the 15 s mark that triggers it, so it has no end of speech to measure from.
     final_latency: stats::Summary,
+    /// Finals ended by the 15 s force-cut (continuous speech), left out of `final_latency`.
+    forced_finals: usize,
     /// Final decode time alone.
     final_decode: stats::Summary,
     decode_seconds_total: f64,
@@ -156,7 +160,7 @@ pub fn run(args: LiveArgs) -> Result<()> {
     let mut resampler: Option<(u32, Resampler)> = None;
     let mut position: u64 = 0;
     let (mut partial_lat, mut final_lat, mut final_dec) = (Vec::new(), Vec::new(), Vec::new());
-    let (mut partials, mut decode_total, mut speech) = (0usize, 0.0f64, 0.0f64);
+    let (mut partials, mut forced_finals, mut decode_total, mut speech) = (0usize, 0usize, 0.0f64, 0.0f64);
     let mut segments = Vec::new();
 
     let mut process = |events: Vec<PipelineEvent>, clock: &CaptureClock| -> Result<()> {
@@ -176,11 +180,13 @@ pub fn run(args: LiveArgs) -> Result<()> {
                         let _ = std::io::stderr().flush();
                     }
                 }
-                PipelineEvent::Final { segment, stats } => {
+                PipelineEvent::Final { segment, stats, forced } => {
                     decode_total += stats.elapsed.as_secs_f64();
                     final_dec.push(stats.elapsed.as_secs_f64());
                     speech += (segment.end - segment.start).as_secs_f64();
-                    if let Some(t) = clock.time_of(stats.audio_end_sample) {
+                    if forced {
+                        forced_finals += 1;
+                    } else if let Some(t) = clock.time_of(stats.audio_end_sample) {
                         final_lat.push(now.duration_since(t).as_secs_f64());
                     }
                     if tty {
@@ -251,6 +257,7 @@ pub fn run(args: LiveArgs) -> Result<()> {
         finals: segments.len(),
         partial_latency: summarize(&partial_lat),
         final_latency: summarize(&final_lat),
+        forced_finals,
         final_decode: summarize(&final_dec),
         decode_seconds_total: decode_total,
         peak_rss_mb: stats::peak_rss_mb(),
@@ -262,7 +269,10 @@ pub fn run(args: LiveArgs) -> Result<()> {
         s.audio_seconds, s.speech_seconds, s.finals, s.partials
     );
     eprintln!("partial latency   {}   (target ≤ 1.5 s)", s.partial_latency);
-    eprintln!("final latency     {}   (end of speech → final, incl. 0.5 s silence; target ≤ 1.0 s)", s.final_latency);
+    eprintln!(
+        "final latency     {}   (end of speech → final, incl. 0.5 s silence; target ≤ 1.0 s; {} force-cut finals not counted)",
+        s.final_latency, s.forced_finals
+    );
     eprintln!("final decode      {}", s.final_decode);
     eprintln!(
         "CPU               {:.1} % of one core on average ({:.1} s CPU over {:.1} s, {} threads; target ≤ 30 %)",

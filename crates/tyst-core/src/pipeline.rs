@@ -130,23 +130,15 @@ pub struct DecodeStats {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PipelineEvent {
     /// Replaces any earlier partial of the same segment.
-    Partial {
-        channel: Channel,
-        segment_id: u64,
-        start: Duration,
-        end: Duration,
-        text: String,
-        stats: DecodeStats,
-    },
+    Partial { channel: Channel, segment_id: u64, start: Duration, end: Duration, text: String, stats: DecodeStats },
     Final {
         segment: Segment,
         stats: DecodeStats,
+        /// Ended by the 15 s force-cut rather than by end-of-speech silence.
+        forced: bool,
     },
     /// The open segment turned out too short; drop its partial.
-    Dropped {
-        channel: Channel,
-        segment_id: u64,
-    },
+    Dropped { channel: Channel, segment_id: u64 },
 }
 
 pub struct ChannelPipeline<D: SpeechDetector> {
@@ -255,6 +247,7 @@ impl<D: SpeechDetector> ChannelPipeline<D> {
                         edited: false,
                     },
                     stats,
+                    forced: seg.forced,
                 });
             }
         }
