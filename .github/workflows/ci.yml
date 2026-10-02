@@ -28,9 +28,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install ALSA headers (microphone capture via cpal)
+      - name: Install Linux build deps (ALSA, PipeWire, WebKitGTK and tray for the app)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev
+        run: >
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libasound2-dev libpipewire-0.3-dev libspa-0.2-dev clang
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/ui/package-lock.json
+      # The app embeds the built UI, so it must exist before clippy and tests compile the app.
+      - name: Build the UI
+        run: npm ci --prefix app/ui && npm run --prefix app/ui check && npm run --prefix app/ui build
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
