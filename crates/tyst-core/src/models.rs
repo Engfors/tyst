@@ -33,6 +33,9 @@ pub struct ModelSpec {
     #[serde(default)]
     pub license: String,
     pub files: Vec<ModelFile>,
+    /// Files computed locally from downloaded ones (no download), pinned the same way.
+    #[serde(default)]
+    pub derived: Vec<DerivedFile>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -44,6 +47,23 @@ pub struct ModelFile {
     pub path: Option<String>,
     pub size: u64,
     pub sha256: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DerivedFile {
+    pub name: String,
+    /// The downloaded file it is computed from.
+    pub from: String,
+    pub transform: Transform,
+    pub size: u64,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Transform {
+    /// [`crate::encoder_rewrite`]: block-local attention rewritten as banded full attention.
+    BandedAttention,
 }
 
 impl ModelFile {
@@ -109,18 +129,45 @@ pub enum FileStatus {
 /// Checks every file of a model. `full` also hashes the files (slow for the encoders).
 pub fn verify(spec: &ModelSpec, models_dir: &Path, full: bool) -> Result<Vec<(String, FileStatus)>> {
     let dir = models_dir.join(&spec.dir);
+    let pinned = spec.files.iter().map(|f| (&f.name, f.size, &f.sha256));
+    let derived = spec.derived.iter().map(|d| (&d.name, d.size, &d.sha256));
     let mut out = Vec::new();
-    for f in &spec.files {
-        let path = dir.join(&f.name);
-        let status = match std::fs::metadata(&path) {
-            Err(_) => FileStatus::Missing,
-            Ok(m) if m.len() != f.size => FileStatus::WrongSize { actual: m.len() },
-            Ok(_) if full && sha256_file(&path)? != f.sha256 => FileStatus::WrongChecksum,
-            Ok(_) => FileStatus::Ok,
-        };
-        out.push((f.name.clone(), status));
+    for (name, size, sha256) in pinned.chain(derived) {
+        out.push((name.clone(), file_status(&dir.join(name), size, sha256, full)?));
     }
     Ok(out)
+}
+
+fn file_status(path: &Path, size: u64, sha256: &str, full: bool) -> Result<FileStatus> {
+    Ok(match std::fs::metadata(path) {
+        Err(_) => FileStatus::Missing,
+        Ok(m) if m.len() != size => FileStatus::WrongSize { actual: m.len() },
+        Ok(_) if full && sha256_file(path)? != sha256 => FileStatus::WrongChecksum,
+        Ok(_) => FileStatus::Ok,
+    })
+}
+
+/// Computes a derived file from its (already downloaded) source and checks it against the pin.
+/// Writes `<name>.part` first, so a failed or interrupted run leaves no wrong file in place.
+pub fn derive(spec: &ModelSpec, models_dir: &Path, file: &DerivedFile) -> Result<()> {
+    let dir = models_dir.join(&spec.dir);
+    let src = dir.join(&file.from);
+    let part = dir.join(format!("{}.part", file.name));
+    match file.transform {
+        Transform::BandedAttention => {
+            crate::encoder_rewrite::band_attention_file(&src, &part)?;
+        }
+    }
+    let actual = (std::fs::metadata(&part).map_err(|e| Error::io(&part, e))?.len(), sha256_file(&part)?);
+    if actual != (file.size, file.sha256.clone()) {
+        let _ = std::fs::remove_file(&part);
+        return Err(Error::Model(format!(
+            "{}: derived file does not match its pin (got {} bytes, sha256 {}; expected {} bytes, sha256 {})",
+            file.name, actual.0, actual.1, file.size, file.sha256
+        )));
+    }
+    let target = dir.join(&file.name);
+    std::fs::rename(&part, &target).map_err(|e| Error::io(&target, e))
 }
 
 /// Directory of a model whose files are present with the right sizes.
@@ -166,6 +213,9 @@ mod tests {
         let p = m.get(PIANISSIMO).unwrap();
         assert_eq!(p.tagged_id(PIANISSIMO), "pianissimo-sv-int8@63730c6");
         assert!(p.files.iter().any(|f| f.name == "vocab.txt"));
+        let banded = &p.derived[0];
+        assert_eq!(banded.transform, Transform::BandedAttention);
+        assert!(p.files.iter().any(|f| f.name == banded.from));
         let vad = m.get(SILERO_VAD).unwrap();
         assert_eq!(vad.files[0].remote_path(), "silero_vad.onnx");
         assert!(vad.files[0].url(vad).ends_with("/resolve/fba88cd2e921609e7675c3aaf51e0b9b295da4bc/silero_vad.onnx"));
@@ -191,6 +241,13 @@ mod tests {
                 ModelFile { name: "b".into(), path: None, size: 1, sha256: "00".into() },
                 ModelFile { name: "c".into(), path: None, size: 1, sha256: "00".into() },
             ],
+            derived: vec![DerivedFile {
+                name: "d".into(),
+                from: "a".into(),
+                transform: Transform::BandedAttention,
+                size: 1,
+                sha256: "00".into(),
+            }],
         };
         std::fs::create_dir_all(dir.join("m")).unwrap();
         std::fs::write(dir.join("m/a"), "abc").unwrap();
@@ -199,6 +256,7 @@ mod tests {
         assert_eq!(st[0].1, FileStatus::Ok);
         assert_eq!(st[1].1, FileStatus::WrongSize { actual: 2 });
         assert_eq!(st[2].1, FileStatus::Missing);
+        assert_eq!(st[3], ("d".to_string(), FileStatus::Missing));
         assert!(installed_dir(&spec, &dir).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }

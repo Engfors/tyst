@@ -63,3 +63,29 @@ fn clip_from_env_transcribes() {
     let wer = errors as f64 / words.max(1) as f64;
     assert!(wer < 0.3, "WER {wer:.2}");
 }
+
+/// The banded encoder that `models fetch` derives must transcribe exactly like the downloaded one.
+#[test]
+fn banded_encoder_matches_the_original() {
+    let Some(dir) = installed(PIANISSIMO) else {
+        eprintln!("skipped: models not installed");
+        return;
+    };
+    let banded = OnnxModelFiles::discover(&dir).unwrap();
+    assert!(banded.encoder.ends_with("encoder-model.banded.int8.onnx"), "{}", banded.encoder.display());
+    let original = OnnxModelFiles { encoder: dir.join("encoder-model.int8.onnx"), ..banded.clone() };
+    let opts = SessionOptions { threads: 2 };
+    let mut a = OnnxTdtEngine::load("original", &original, opts).unwrap();
+    let mut b = OnnxTdtEngine::load("banded", &banded, opts).unwrap();
+    let pcm = match std::env::var_os("TYST_TEST_CLIP") {
+        Some(clip) => tyst_core::audio_file::load_16k_mono(Path::new(&clip)).unwrap(),
+        None => (0..16_000 * 30).map(|i| (i as f32 * 0.07).sin() * 0.1).collect(),
+    };
+    // Shorter and longer than the 256-frame (20.5 s) attention window.
+    for secs in [1usize, 4, 15, 25] {
+        let clip = &pcm[..(secs * 16_000).min(pcm.len())];
+        let (ra, rb) = (a.transcribe(clip).unwrap(), b.transcribe(clip).unwrap());
+        assert_eq!(ra.text, rb.text, "{secs} s");
+        assert_eq!(ra.tokens, rb.tokens, "{secs} s");
+    }
+}

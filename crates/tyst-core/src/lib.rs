@@ -5,6 +5,7 @@
 
 pub mod asr;
 pub mod audio_file;
+pub mod encoder_rewrite;
 pub mod journal;
 pub mod markdown;
 pub mod models;

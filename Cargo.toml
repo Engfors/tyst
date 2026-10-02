@@ -19,6 +19,8 @@ cpal = "0.18"
 libc = "0.2"
 log = "0.4"
 env_logger = "0.11"
+protobuf = "3.7"
+protobuf-codegen = "3.7"
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "download-binaries", "copy-dylibs", "tls-rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

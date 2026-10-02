@@ -96,6 +96,16 @@ fn fetch(id: &str, spec: &ModelSpec, models_dir: &Path) -> Result<()> {
         }
         download(spec, file, &dir)?;
     }
+    for file in &spec.derived {
+        let path = dir.join(&file.name);
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() == file.size) {
+            eprintln!("  {} present", file.name);
+            continue;
+        }
+        eprintln!("  {}: computing from {} ({:?})", file.name, file.from, file.transform);
+        models::derive(spec, models_dir, file)?;
+        eprintln!("  {} ok ({:.1} MB, sha256 verified)", file.name, file.size as f64 / 1e6);
+    }
     Ok(())
 }
 

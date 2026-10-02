@@ -30,7 +30,7 @@ impl OnnxModelFiles {
     /// Finds the files in a model directory, preferring int8 weights.
     pub fn discover(dir: &Path) -> Result<Self> {
         let pick = |stem: &str| -> Result<PathBuf> {
-            for name in [format!("{stem}.int8.onnx"), format!("{stem}.onnx")] {
+            for name in [format!("{stem}.banded.int8.onnx"), format!("{stem}.int8.onnx"), format!("{stem}.onnx")] {
                 let p = dir.join(&name);
                 if p.is_file() {
                     return Ok(p);

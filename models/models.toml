@@ -18,6 +18,11 @@ files = [
   { name = "nemo128.onnx", size = 138824, sha256 = "5b4a84c52eeaa615dc46d781cc7e4598f9b432184831d57493c48adcd01371a9" },
   { name = "vocab.txt", size = 93939, sha256 = "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" },
 ]
+# Computed by `models fetch` from the encoder above, without a download: the same attention without
+# the 256-frame block padding, so short segments no longer cost as much as 20 s ones. Same outputs.
+derived = [
+  { name = "encoder-model.banded.int8.onnx", from = "encoder-model.int8.onnx", transform = "banded-attention", size = 626729983, sha256 = "3825144e359129b72f9bd6025b97987cc9b83d8614124eaff0a8306fc9855381" },
+]
 
 # Only used when the user forces English (ADR 0002). onnx-asr export, same loader as Pianissimo.
 [models.parakeet-v3-int8]

@@ -10,6 +10,7 @@ license.workspace = true
 chrono.workspace = true
 log.workspace = true
 ort.workspace = true
+protobuf.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -17,3 +18,6 @@ symphonia.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 unicode-normalization.workspace = true
+
+[build-dependencies]
+protobuf-codegen.workspace = true
