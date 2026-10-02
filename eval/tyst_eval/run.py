@@ -124,7 +124,8 @@ def run(args) -> Path:
                 for cid, info in per_clip.items():
                     clip: Clip = info["clip"]
                     segs = info["segments"][decode]
-                    if any(role not in s.decoded for s in segs for role in ("sv", "en")):
+                    needed = {"only-sv": ("sv",), "only-en": ("en",)}.get(strategy, ("sv", "en"))
+                    if any(role not in s.decoded for s in segs for role in needed):
                         continue
                     if strategy == "lid" and not lid:
                         continue
