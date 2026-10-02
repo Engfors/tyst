@@ -10,7 +10,7 @@ fn main() -> tyst_core::Result<()> {
     let pcm = tyst_core::audio_file::load_16k_mono(args[2].as_ref())?;
     let mut probe = SileroVad::load(args[1].as_ref())?;
     let mut line = String::new();
-    for (i, w) in pcm.chunks_exact(512).enumerate() {
+    for (i, w) in pcm.as_chunks::<512>().0.iter().enumerate() {
         let p = probe.prob(w)?;
         line.push(if p > 0.5 {
             '#'
