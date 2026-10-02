@@ -1,0 +1,15 @@
+[package]
+name = "tyst-runtime"
+description = "Tyst runtime shared by the CLI and the app: model loading and download, live meeting sessions."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono.workspace = true
+log.workspace = true
+thiserror.workspace = true
+tyst-core.workspace = true
+tyst-platform.workspace = true
+ureq.workspace = true

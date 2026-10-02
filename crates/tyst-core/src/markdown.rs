@@ -41,13 +41,21 @@ pub fn render(session: &Session) -> String {
     out
 }
 
+/// The file name [`save`] tries first (it adds ` (2)` etc. when that exists).
+pub fn file_name(session: &Session) -> String {
+    format!("{}.md", file_stem(session))
+}
+
+fn file_stem(session: &Session) -> String {
+    format!("{} {}", session.info.started_at.format("%Y-%m-%d %H%M"), sanitize_file_name(&display_title(session)))
+}
+
 /// Writes the transcript into `dir` as `YYYY-MM-DD HHmm <title>.md`, never overwriting an
 /// existing file. Returns the path written.
 pub fn save(session: &Session, dir: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
     let body = render(session);
-    let stem =
-        format!("{} {}", session.info.started_at.format("%Y-%m-%d %H%M"), sanitize_file_name(&display_title(session)));
+    let stem = file_stem(session);
     for n in 1.. {
         let name = if n == 1 { format!("{stem}.md") } else { format!("{stem} ({n}).md") };
         let path = dir.join(name);
