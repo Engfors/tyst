@@ -9,7 +9,7 @@
 //! forward, so Me and Others stay on the same timeline.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -20,6 +20,7 @@ use tyst_core::journal::Journal;
 use tyst_core::markdown;
 use tyst_core::pipeline::{ChannelPipeline, PipelineEvent, SharedEngines};
 use tyst_core::resample::{Resampler, SAMPLE_RATE};
+use tyst_core::router::LanguageMode;
 use tyst_core::segmenter::SpeechDetector;
 use tyst_core::transcript::{
     Channel, Marker, MarkerKind, Segment, Session, SessionInfo, SpeakerLabels, new_session_id,
@@ -59,6 +60,8 @@ pub struct MeetingOptions {
     pub labels: SpeakerLabels,
     /// App name and version for the front matter, e.g. "Tyst 0.1.0".
     pub app: String,
+    /// Initial session language.
+    pub mode: LanguageMode,
     pub sources: Vec<(Channel, SourceFactory)>,
 }
 
@@ -72,8 +75,26 @@ struct Recorder {
 struct Shared {
     started: Instant,
     paused: AtomicBool,
+    /// Session language (SPEC 6.3: Auto / Swedish / English), switchable while recording.
+    mode: AtomicU8,
     recorder: Mutex<Recorder>,
     events: Sender<MeetingEvent>,
+}
+
+fn mode_to_u8(m: LanguageMode) -> u8 {
+    match m {
+        LanguageMode::Auto => 0,
+        LanguageMode::Swedish => 1,
+        LanguageMode::English => 2,
+    }
+}
+
+fn mode_from_u8(v: u8) -> LanguageMode {
+    match v {
+        1 => LanguageMode::Swedish,
+        2 => LanguageMode::English,
+        _ => LanguageMode::Auto,
+    }
 }
 
 impl Shared {
@@ -157,6 +178,7 @@ impl Meeting {
         let shared = Arc::new(Shared {
             started: Instant::now(),
             paused: AtomicBool::new(false),
+            mode: AtomicU8::new(mode_to_u8(opts.mode)),
             recorder: Mutex::new(Recorder { journal: Some(journal), ..Default::default() }),
             events,
         });
@@ -187,6 +209,16 @@ impl Meeting {
 
     pub fn elapsed(&self) -> Duration {
         self.shared.started.elapsed()
+    }
+
+    pub fn language(&self) -> LanguageMode {
+        mode_from_u8(self.shared.mode.load(Ordering::SeqCst))
+    }
+
+    /// Switches the session language; applies from the next segment on every channel.
+    pub fn set_language(&self, mode: LanguageMode) {
+        self.shared.mode.store(mode_to_u8(mode), Ordering::SeqCst);
+        log::info!("meeting language: {mode:?}");
     }
 
     pub fn is_paused(&self) -> bool {
@@ -401,6 +433,7 @@ fn worker_thread<D: SpeechDetector>(
     let gap = (GAP.as_secs_f64() * SAMPLE_RATE as f64) as u64;
     let (mut level_sum, mut level_n) = (0.0f64, 0usize);
     let mut flushed_for_pause = false;
+    let mut mode = pipeline.router_mut().mode();
     let fail = |e: tyst_core::Error| {
         log::error!("{channel:?} pipeline: {e}");
         shared.emit(MeetingEvent::Error { channel: Some(channel), message: e.to_string() });
@@ -422,6 +455,11 @@ fn worker_thread<D: SpeechDetector>(
             Err(RecvTimeoutError::Disconnected) => break,
         };
         flushed_for_pause = false;
+        let wanted = mode_from_u8(shared.mode.load(Ordering::SeqCst));
+        if wanted != mode {
+            mode = wanted;
+            pipeline.router_mut().set_mode(mode);
+        }
         let r = match &mut resampler {
             Some((rate, r)) if *rate == chunk.sample_rate => r,
             _ => &mut resampler.insert((chunk.sample_rate, Resampler::new(chunk.sample_rate, SAMPLE_RATE))).1,
@@ -577,6 +615,7 @@ mod tests {
                 transcripts_dir: dir.to_path_buf(),
                 labels: SpeakerLabels::default(),
                 app: "Tyst test".into(),
+                mode: LanguageMode::Auto,
                 sources,
             },
             tx,
@@ -670,6 +709,7 @@ mod tests {
                 transcripts_dir: dir.clone(),
                 labels: SpeakerLabels::default(),
                 app: "Tyst test".into(),
+                mode: LanguageMode::Auto,
                 sources: vec![(Channel::Me, bad)],
             },
             tx,

@@ -72,6 +72,7 @@ pub fn run(args: MeetingArgs) -> Result<()> {
         transcripts_dir: args.out_dir.clone(),
         labels: SpeakerLabels::default(),
         app: app_name(),
+        mode: rt.mode,
         sources,
     };
     let meeting = Meeting::start(&rt, opts, tx)?;
