@@ -15,6 +15,7 @@ terms = [
   "Helm",
   "staging",
   "container",
+  "rollback",
 ]
 
 [[replacement]]
