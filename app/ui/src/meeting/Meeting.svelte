@@ -80,8 +80,13 @@
   const latestLine = $derived.by(() => {
     const t = turns[turns.length - 1];
     if (!t) return "";
-    return (t.partial || t.text).split(/(?<=[.!?])\s+/).pop() ?? "";
+    const all = [t.text, t.partial].filter(Boolean).join(" ");
+    return all.length > 90 ? "…" + all.slice(-90) : all;
   });
+
+  function fileName(path: string | null): string {
+    return path ? (path.split(/[\\/]/).pop() ?? path) : "";
+  }
 
   function label(ch: Channel): string {
     return ch === "me" ? (snap?.labels.me ?? "Me") : (snap?.labels.others ?? "Others");
@@ -249,7 +254,7 @@
     </div>
 
     {#if compact}
-      <div class="line" data-tauri-drag-region>{latestLine}</div>
+      <div class="line" data-tauri-drag-region><span dir="ltr">{latestLine}</span></div>
     {:else}
       <div class="meters" data-tauri-drag-region>
         {#each snap?.channels ?? [] as ch}
@@ -338,8 +343,8 @@
         <button class="primary" type="submit">Save</button>
       </div>
       <div class="hint muted">
-        <span class="path mono" title={preview ?? ""}>{preview}</span>
-        <span>Esc saves with the time · {countdown}s</span>
+        <span class="path mono" title={preview ?? ""}>{fileName(preview)}</span>
+        <span class="count">Esc: save as is · {countdown}s</span>
       </div>
     </form>
   {/if}
@@ -489,7 +494,7 @@
     min-width: 0;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    /* Clip the start, so the newest words stay visible. */
     direction: rtl;
     text-align: left;
   }
@@ -603,7 +608,7 @@
   .naming {
     position: absolute;
     inset: 42px 0 0 0;
-    background: var(--panel);
+    background: var(--bg);
     padding: 14px;
     display: flex;
     flex-direction: column;
@@ -641,8 +646,11 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    direction: rtl;
-    text-align: left;
+  }
+
+  .count {
+    flex: none;
+    white-space: nowrap;
   }
 
   .toast {

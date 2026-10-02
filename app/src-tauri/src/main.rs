@@ -25,11 +25,13 @@ fn main() {
     let config = Config::load();
 
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // A second launch opens settings (or the meeting window while recording).
-            match app.state::<AppState>().phase() {
-                state::Phase::Idle => windows::show_settings(app, None),
-                _ => windows::show_meeting(app),
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // A second launch passes its command line to the running app.
+            if !handle_args(app, &args) {
+                match app.state::<AppState>().phase() {
+                    state::Phase::Idle => windows::show_settings(app, None),
+                    _ => windows::show_meeting(app),
+                }
             }
         }))
         .plugin(tauri_plugin_dialog::init())
@@ -84,6 +86,8 @@ fn main() {
                 if tyst_runtime::fetch::installed(&tyst_runtime::fetch::DEFAULT_MODELS, &cfg.models_dir()) {
                     AppState::preload(&handle);
                 }
+                let args: Vec<String> = std::env::args().collect();
+                handle_args(&handle, &args);
                 std::thread::spawn(move || offer_recovery(&handle));
             }
             Ok(())
@@ -100,6 +104,41 @@ fn main() {
         }
         _ => {}
     });
+}
+
+/// Command-line actions, for desktop shortcuts and scripts: `tyst --toggle-meeting` starts or
+/// stops a meeting (in the running instance if there is one), `--pause` pauses or resumes,
+/// `--show-meeting` and `--settings` open windows. Returns whether an action was found.
+fn handle_args(app: &AppHandle, args: &[String]) -> bool {
+    let mut handled = false;
+    for a in args.iter().skip(1) {
+        let r = match a.as_str() {
+            "--toggle-meeting" => match app.state::<AppState>().phase() {
+                state::Phase::Recording | state::Phase::Paused => {
+                    state::stop_meeting_in_background(app);
+                    Ok(())
+                }
+                state::Phase::Starting => Ok(()),
+                _ => state::start_meeting(app),
+            },
+            "--pause" => state::toggle_pause(app),
+            "--show-meeting" => {
+                windows::show_meeting(app);
+                Ok(())
+            }
+            "--settings" => {
+                windows::show_settings(app, None);
+                Ok(())
+            }
+            _ => continue,
+        };
+        handled = true;
+        if let Err(e) = r {
+            log::error!("{a}: {e}");
+            notify_error(app, &e);
+        }
+    }
+    handled
 }
 
 /// Crash recovery (SPEC 6.6): every journal left by a session that never saved offers to become
@@ -125,8 +164,11 @@ fn offer_recovery(app: &AppHandle) {
         let recover = app
             .dialog()
             .message(format!(
-                "Tyst found an unsaved meeting from {when} ({} segments). Recover it as a Markdown file?",
-                session.segments.len()
+                "Tyst found an unsaved meeting from {when} ({}). Recover it as a Markdown file?",
+                match session.segments.len() {
+                    1 => "1 passage".to_string(),
+                    n => format!("{n} passages"),
+                }
             ))
             .title("Recover unsaved meeting")
             .kind(MessageDialogKind::Info)

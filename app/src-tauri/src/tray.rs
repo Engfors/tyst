@@ -69,7 +69,10 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
 fn on_menu(app: &AppHandle, id: &str) {
     let result = match id {
         "start_stop" => match app.state::<AppState>().phase() {
-            Phase::Recording | Phase::Paused => state::stop_meeting(app),
+            Phase::Recording | Phase::Paused => {
+                state::stop_meeting_in_background(app);
+                Ok(())
+            }
             Phase::Idle | Phase::Naming => state::start_meeting(app),
             Phase::Starting => Ok(()),
         },

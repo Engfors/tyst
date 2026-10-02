@@ -454,6 +454,18 @@ pub fn stop_meeting(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// [`stop_meeting`] off the calling thread (the final decodes take a moment), for the tray and
+/// the command line, which run on the event loop.
+pub fn stop_meeting_in_background(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = stop_meeting(&app) {
+            log::error!("stopping meeting: {e}");
+            crate::notify_error(&app, &e);
+        }
+    });
+}
+
 pub fn preview_path(app: &AppHandle, title: Option<&str>) -> Option<String> {
     let st = app.state::<AppState>();
     match &*st.session.lock().expect("session lock") {
