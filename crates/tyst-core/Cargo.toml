@@ -1,0 +1,19 @@
+[package]
+name = "tyst-core"
+description = "Tyst transcription pipeline: VAD, segmentation, ASR, vocabulary, transcript output. No network, no UI, no OS APIs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono.workspace = true
+log.workspace = true
+ort.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+symphonia.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+unicode-normalization.workspace = true
