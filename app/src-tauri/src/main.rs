@@ -21,6 +21,14 @@ use crate::config::Config;
 use crate::state::AppState;
 
 fn main() {
+    // WebKitGTK's DMA-BUF renderer kills the app on some Wayland setups (notably NVIDIA) with
+    // "Error 71 (Protocol error) dispatching to Wayland display". Our windows are small, so the
+    // shared-memory path costs nothing noticeable. An explicit setting by the user wins.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        // SAFETY: still single-threaded; nothing has read the environment yet.
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let config = Config::load();
 
