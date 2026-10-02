@@ -31,7 +31,7 @@ Lines in parentheses are stage directions and are not spoken.
 
 ## After recording
 
-6. Listen to each clip and edit `references/<id>.txt` so it matches exactly what was said. Punctuation and case don't matter for WER; words do. Write numbers the way they are written in the manuscript (as words); the harness doesn't treat "18" and "arton" as equal.
+6. Listen to each clip and edit `references/<id>.txt` so it matches exactly what was said. Punctuation and case don't matter for WER; words do. Numbers can be written as words or digits; the harness spells out digits before scoring.
 7. For mixed clips, note the second where each language block starts and run
    `python3 make_refs.py spans <id> <clip length in s> <start of block 2> <start of block 3> …`.
    The plain `python3 make_refs.py` run lists the blocks in order. Paste the printed `lang_spans` line into the clip's entry in `manifest.toml`. Rough times (±1 s) are fine.
@@ -42,4 +42,4 @@ Recordings and references stay on your machine; nothing here is committed with a
 ## Term notes
 
 - Term accuracy counts only whole-word matches of the terms in `terms.toml`. Inflected forms such as "pipelinen" or "containrar" count for WER only, so the sv-terms manuscripts use each term's base form several times as well.
-- sv-terms-03 and sv-terms-05 use "rollback", which is not in `terms.toml` yet; it should be added.
+- sv-terms-03 and sv-terms-05 use "rollback", which is in `terms.toml`.
