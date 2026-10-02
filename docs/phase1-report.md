@@ -1,7 +1,6 @@
 # Phase 1 report: core pipeline and CLI
 
-- **Status:** In progress. Built and measured in the cloud build container, including the banded
-  encoder (section 3); the owner-clip WER run and the M1 Max live run are still to do (section 4).
+- **Status:** All Phase 1 targets met on the owner's machine (section 4); awaiting the owner's acceptance.
 - **Code:** `crates/tyst-core`, `crates/tyst-platform`, `crates/tyst-cli` · **CI:** `.github/workflows/ci.yml`
 
 ## 1. What exists
@@ -90,12 +89,42 @@ bytes. The model id in transcripts stays `pianissimo-sv-int8@63730c6`, since the
 are the released ones. Both encoders stay on disk (the released one is the source); dropping it
 after the rewrite would save 630 MB and is left for later.
 
-## 4. Still open for Phase 1 acceptance
+## 4. Acceptance run on the owner's machine
 
-1. **Owner clips, WER within 1 pp** (owner's Linux machine, against the Phase 0 `summary.json`):
-   `tyst-cli bench eval/manifest.toml --baseline <Phase 0 summary.json>`. The `Δ pp` column is the check.
-2. **Live partial latency ≤ 1.5 s on the owner's machine** (the owner tests on Linux; SPEC names the M1 Max): `tyst-cli live --mic` (Enter stops) prints
-   partial latency, end-of-speech-to-final latency and CPU. `--threads 1` and `--threads 4` both matter
-   for the CPU target.
-3. **CPU target (≤ 30 % of a core):** met in the container with the banded encoder (19 % at 1 thread,
-   25 % at 4); `live --mic` on the owner's machine confirms it.
+AMD Ryzen 7 7800X3D (8 cores / 16 threads), Arch Linux, PipeWire microphone via ALSA, banded encoder.
+The SPEC names the M1 Max; the owner ran acceptance on this machine instead.
+
+### WER: within 1 pp of Phase 0 in every category
+
+`tyst-cli bench eval/manifest.toml --baseline <Phase 0 summary.json>`, 95 clips (owner clips, synthetic
+clips and FLEURS), 4 threads, decode RTF 0.018:
+
+| category | clips | Phase 0 WER | `tyst-cli` WER | Δ pp |
+|---|---|---|---|---|
+| all | 95 | 10.7 | 10.7 | +0.0 |
+| sv (owner) | 5 | 6.2 | 6.9 | +0.7 |
+| en (owner) | 5 | 5.7 | 5.9 | +0.2 |
+| mixed (owner) | 5 | 9.0 | 8.6 | −0.4 |
+| sv-terms (owner) | 5 | 7.8 | 7.7 | −0.1 |
+| synth-sv / -en / -mixed / -terms | 5 each | 8.3 / 4.2 / 4.4 / 26.1 | 8.8 / 4.2 / 4.4 / 25.4 | +0.5 / 0 / 0 / −0.7 |
+| fleurs-sv / -en / -mixed | 25 / 25 / 5 | 10.4 / 23.3 / 26.0 | 10.4 / 22.9 / 25.8 | 0 / −0.4 / −0.2 |
+
+The largest deviation is +0.7 pp on 5 Swedish clips, a handful of words. With vocabulary rules, term
+recall is 62 % and exact spelling 62 % overall (sv-terms: 76 %).
+
+### Live: partials 0.26 s p95, CPU 14–20 % of one core
+
+`tyst-cli live --mic`, about 75 s of speech each:
+
+| threads | partial latency p95 | end of speech → final p95 | final decode p95 | CPU (% of one core) | peak RSS |
+|---|---|---|---|---|---|
+| 1 | 0.55 s | 1.43 s | 0.66 s | 14 % | 1.39 GB |
+| 4 | 0.26 s | 2.22 s | 0.23 s | 20 % | 1.41 GB |
+
+All three Phase 1 targets are met on this machine: WER within 1 pp, partials well under 1.5 s and CPU
+under 30 % of a core. Model load takes 1.0 s.
+
+End-of-speech-to-final latency is mostly waiting, not compute: the final decode takes 0.2–0.7 s, and
+the rest is the segmenter waiting for its end-of-speech silence (ADR 0004). It varies with how the
+speaker pauses (the 4-thread run had 76 s of near-continuous speech and only 6 finals). The SPEC sets
+no target for it; it is worth revisiting with dictation in Phase 2.
