@@ -92,10 +92,10 @@ after the rewrite would save 630 MB and is left for later.
 
 ## 4. Still open for Phase 1 acceptance
 
-1. **Owner clips, WER within 1 pp** (owner machine):
+1. **Owner clips, WER within 1 pp** (owner's Linux machine, against the Phase 0 `summary.json`):
    `tyst-cli bench eval/manifest.toml --baseline <Phase 0 summary.json>`. The `Δ pp` column is the check.
-2. **Live partial latency ≤ 1.5 s on the M1 Max:** `tyst-cli live --mic` (Enter stops) prints
+2. **Live partial latency ≤ 1.5 s on the owner's machine** (the owner tests on Linux; SPEC names the M1 Max): `tyst-cli live --mic` (Enter stops) prints
    partial latency, end-of-speech-to-final latency and CPU. `--threads 1` and `--threads 4` both matter
    for the CPU target.
 3. **CPU target (≤ 30 % of a core):** met in the container with the banded encoder (19 % at 1 thread,
-   25 % at 4); `live --mic` on the M1 Max confirms it on the target machine.
+   25 % at 4); `live --mic` on the owner's machine confirms it.
