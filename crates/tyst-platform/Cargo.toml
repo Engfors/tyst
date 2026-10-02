@@ -1,0 +1,18 @@
+[package]
+name = "tyst-platform"
+description = "Tyst platform layer: OS integrations behind small traits (audio capture first; hotkeys, paste, windows in later phases)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = ["mic"]
+# Microphone capture through cpal (CoreAudio on macOS, ALSA/PipeWire on Linux; needs libasound2-dev to build there).
+mic = ["dep:cpal"]
+
+[dependencies]
+cpal = { workspace = true, optional = true }
+log.workspace = true
+tyst-core.workspace = true
+thiserror.workspace = true

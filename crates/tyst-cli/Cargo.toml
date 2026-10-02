@@ -1,0 +1,29 @@
+[package]
+name = "tyst-cli"
+description = "Headless Tyst: transcribe files, live microphone test, benchmark, model management."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tyst-cli"
+path = "src/main.rs"
+
+[features]
+default = ["mic"]
+mic = ["tyst-platform/mic"]
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+env_logger.workspace = true
+libc.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tyst-core.workspace = true
+tyst-platform.workspace = true
+ureq.workspace = true

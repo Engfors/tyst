@@ -1,0 +1,52 @@
+# Pinned model manifest (SPEC 5.2). Models are downloaded on demand into the models directory
+# (macOS: ~/Library/Application Support/Tyst/models, Linux: ~/.local/share/tyst/models,
+# override with TYST_MODELS) and verified against these sizes and SHA-256 checksums.
+#
+# `tyst-cli models fetch` downloads them; `tyst-cli models verify` checks them. The core crate
+# never touches the network.
+
+[models.pianissimo-sv-int8]
+kind = "asr"
+lang = "sv"
+dir = "pianissimo-sv-onnx"
+hf_repo = "KlangAI/pianissimo-sv-onnx"
+revision = "63730c6021234f26b9bbae9a07a04fec39e7a52e"
+license = "CC BY 4.0, Klang AI AB"
+files = [
+  { name = "encoder-model.int8.onnx", size = 630313965, sha256 = "13288a5f4f009bf6bf8a3260044d098f6922e8caf1c564521d4962fa5749f66c" },
+  { name = "decoder_joint-model.int8.onnx", size = 30025652, sha256 = "0f9213242acd8874f2717c5e3cdb888d4e7673ddf3abb9ee3a2fd2eaf0acdd03" },
+  { name = "nemo128.onnx", size = 138824, sha256 = "5b4a84c52eeaa615dc46d781cc7e4598f9b432184831d57493c48adcd01371a9" },
+  { name = "vocab.txt", size = 93939, sha256 = "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" },
+]
+# Computed by `models fetch` from the encoder above, without a download: the same attention without
+# the 256-frame block padding, so short segments no longer cost as much as 20 s ones. Same outputs.
+derived = [
+  { name = "encoder-model.banded.int8.onnx", from = "encoder-model.int8.onnx", transform = "banded-attention", size = 626729983, sha256 = "3825144e359129b72f9bd6025b97987cc9b83d8614124eaff0a8306fc9855381" },
+]
+
+# Only used when the user forces English (ADR 0002). onnx-asr export, same loader as Pianissimo.
+[models.parakeet-v3-int8]
+kind = "asr"
+lang = "en"
+dir = "parakeet-tdt-0.6b-v3-onnx"
+hf_repo = "istupakov/parakeet-tdt-0.6b-v3-onnx"
+revision = "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce"
+license = "CC BY 4.0, NVIDIA"
+files = [
+  { name = "encoder-model.int8.onnx", size = 652183999, sha256 = "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09" },
+  { name = "decoder_joint-model.int8.onnx", size = 18202004, sha256 = "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70" },
+  { name = "nemo128.onnx", size = 139764, sha256 = "a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f" },
+  { name = "vocab.txt", size = 93939, sha256 = "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" },
+]
+
+# Silero VAD v4 (MIT, Silero Team), the export sherpa-onnx ships and Phase 0 used. The v5 export
+# misses quiet speech after loud speech on the FLEURS mixed clips; the loader handles both.
+[models.silero-vad]
+kind = "vad"
+dir = "silero-vad"
+hf_repo = "csukuangfj/vad"
+revision = "fba88cd2e921609e7675c3aaf51e0b9b295da4bc"
+license = "MIT, Silero Team"
+files = [
+  { name = "silero_vad.onnx", size = 1807522, sha256 = "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28" },
+]
