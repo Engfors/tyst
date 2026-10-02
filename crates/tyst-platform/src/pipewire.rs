@@ -211,13 +211,10 @@ fn run_stream(
             if rate == 0 || end <= offset {
                 return;
             }
-            let frames: Vec<f32> = bytes[offset..end]
-                .chunks_exact(4 * channels)
-                .map(|f| {
-                    f.chunks_exact(4).map(|s| f32::from_le_bytes([s[0], s[1], s[2], s[3]])).sum::<f32>()
-                        / channels as f32
-                })
-                .collect();
+            let samples: Vec<f32> =
+                bytes[offset..end].as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+            let frames: Vec<f32> =
+                samples.chunks_exact(channels).map(|f| f.iter().sum::<f32>() / channels as f32).collect();
             let _ = data.sink.send(AudioChunk {
                 channel: data.channel,
                 sample_rate: rate,
