@@ -29,7 +29,8 @@ Pianissimo and FLEURS come from Hugging Face; everything else from sherpa-onnx's
 Put 20 clips and hand-corrected references into `~/tyst-eval/clips/owner/` with the names that
 [`manifest.toml`](manifest.toml) lists (`sv-01.wav` + `sv-01.txt`, …, `sv-terms-05.wav`). Any
 format libsndfile reads works; edit the `audio` path if yours are `.m4a`/`.flac`. For mixed clips,
-uncomment `lang_spans` and give rough start/end seconds per language block. Add the technical
+uncomment `lang_spans` and give rough start/end seconds per language block. Clips that switch
+language every turn get one span per turn; a long list is fine. Add the technical
 terms that occur in your clips to [`terms.toml`](terms.toml).
 
 ## Run
@@ -58,7 +59,8 @@ python3 -m tyst_eval bench                                 # RTF + RSS per model
   toward the current language), `parakeet-first` (Parakeet, re-decode with Pianissimo if the text
   looks Swedish). All share the hysteresis rule: segments under 1.5 s keep the current language.
 - **post**: `raw` model output, or `vocab` with replacement rules and canonical term spelling.
-- **WER** on normalized text (lowercase, no punctuation). **Term recall**: share of term
+- **WER** on normalized text (lowercase, no punctuation, digits spelled out in the clip's language so
+  "18" and "arton" match; `--no-number-norm` turns that off). **Term recall**: share of term
   occurrences in the reference found in the output; **term exact** also requires exact casing.
 - **Wrong-engine rate**: share of segments routed to the other language's engine, using the clip
   language or `lang_spans` at the segment midpoint.

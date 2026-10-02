@@ -134,7 +134,7 @@ def run(args) -> Path:
                         hyp = apply_vocabulary(hyp, vocab)
                     if post == "raw":
                         (hyp_dir / f"{cid}.{decode}.{strategy}.txt").write_text(hyp + "\n", encoding="utf-8")
-                    errs, n = word_errors(info["ref"], hyp)
+                    errs, n = word_errors(info["ref"], hyp, None if args.no_number_norm else clip.lang)
                     found, exact, total = term_hits(info["ref"], hyp, vocab.terms)
                     wrong = sum(r.lang != s.truth for r, s in zip(routed, segs))
                     for key in (clip.category, "ALL"):

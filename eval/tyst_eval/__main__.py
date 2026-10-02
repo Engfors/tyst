@@ -37,6 +37,7 @@ def main() -> None:
     r.add_argument("--dual-bias", type=float, default=0.05)
     r.add_argument("--min-silence", type=float, default=0.5)
     r.add_argument("--max-speech", type=float, default=15.0)
+    r.add_argument("--no-number-norm", action="store_true", help="score digits and spelled-out numbers as different words")
     r.add_argument("--out")
 
     b = sub.add_parser("bench", help="RTF and RSS per model, each in a fresh process")
