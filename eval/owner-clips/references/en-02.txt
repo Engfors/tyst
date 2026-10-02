@@ -1,0 +1,10 @@
+Could you walk me through the project you finished this spring?
+Sure. We moved a customer's whole platform from their own data center to a public cloud. They had around sixty services, some of them more than ten years old, and very little documentation.
+Where did you start?
+We started by talking to the people who actually ran the systems every day. The documentation said one thing, but the people knew what really happened at three in the morning when something broke. That gave us a much more honest picture.
+Did anything go badly?
+Of course. One of the older systems had a license tied to the physical hardware, and nobody had noticed. We found out two weeks before the planned move, and it took a month of negotiation to sort out. So the timeline slipped.
+What would you do differently next time?
+I would spend more time on the boring questions early on. Licenses, contracts, who owns which system. The technical work is usually the easy part. It's everything around it that takes time.
+And the customer, are they happy?
+I think so. Their costs are a bit lower, but more importantly, they can make changes in days instead of months. That was the real goal.

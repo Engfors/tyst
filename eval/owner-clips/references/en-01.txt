@@ -1,0 +1,8 @@
+So, tell me about the app you're building.
+It's called Tyst, which means quiet in Swedish. It's a small desktop app that transcribes meetings and lets you dictate text into any program. The main idea is that everything runs on your own computer. Nothing is sent to the cloud.
+Why does that matter so much to you?
+A lot of the meetings I'm in are with customers, and they talk about things that really shouldn't end up on someone else's server. Most transcription tools today upload the audio somewhere, and you just have to trust that it's handled properly. I'd rather not have to trust anyone.
+Isn't it slower to run it locally?
+It used to be. But the models have become a lot smaller and faster over the last couple of years. On a modern laptop you can transcribe faster than real time without even using the graphics card. That's what we're testing right now, actually. We're comparing a few models to see which one handles Swedish and English best.
+What's the hardest part?
+Meetings where people switch languages. In Sweden that happens all the time. Someone starts in Swedish, then a colleague from another office joins and everyone switches to English. Getting the app to follow along without mixing everything up is the tricky bit.

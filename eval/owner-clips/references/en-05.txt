@@ -1,0 +1,16 @@
+Okay, quick check-in. How was your week?
+Busy, but good. I finished the login fix and sent it for review on Wednesday.
+Nice. Did anyone look at it yet?
+Karin had a look this morning. She had two small comments, nothing big.
+Great. What's next?
+The search page. It's really slow for large customers. I think there's a missing index, but I want to measure first.
+Makes sense. Do you need anything from me?
+Maybe access to the production logs. I only have access to staging right now.
+I'll sort that out today.
+Thanks. Oh, and I'll be off on Friday. My daughter has a school play.
+No problem. Just put it in the calendar.
+Will do.
+Anything else on your mind?
+Not really. Well, actually, the build is getting slow. It takes almost twenty minutes now.
+Yeah, I've noticed. Let's bring it up at the team meeting.
+Sounds good.
