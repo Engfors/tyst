@@ -22,7 +22,8 @@ crates/tyst-core      pipeline: resample -> Silero VAD -> segmenter -> router ->
                       -> transcript -> Markdown writer / journal. Pure Rust + ONNX Runtime, no network, no OS APIs.
 crates/tyst-platform  OS integrations behind traits (Phase 1: microphone via cpal, feature `mic`).
 crates/tyst-cli       headless CLI: transcribe, live, bench, models, recover.
-models/models.toml    pinned model manifest (Hugging Face repo + revision + SHA-256 per file).
+models/models.toml    pinned model manifest (Hugging Face repo + revision + SHA-256 per file, plus files
+                      `models fetch` derives locally, e.g. the banded encoder from `encoder_rewrite`).
 eval/                 Phase 0 Python harness and the clip manifest (no audio in git).
 docs/                 ADRs and phase reports.
 ```
