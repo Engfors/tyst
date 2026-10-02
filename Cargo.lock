@@ -5251,6 +5251,11 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "log",
+ "objc2",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+ "objc2-foundation",
  "pipewire",
  "thiserror 2.0.21",
  "tyst-core",

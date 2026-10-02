@@ -13,6 +13,8 @@ mic = ["dep:cpal"]
 # Linux: PipeWire capture of the microphone and of the default output's monitor (system audio).
 # Needs libpipewire-0.3 headers and clang to build (Arch: pipewire, clang; Debian: libpipewire-0.3-dev).
 pipewire = ["dep:pipewire"]
+# macOS: system audio through a Core Audio process tap (macOS 14.4+).
+macos-tap = ["dep:objc2", "dep:objc2-foundation", "dep:objc2-core-audio", "dep:objc2-core-audio-types", "dep:objc2-core-foundation"]
 
 [dependencies]
 cpal = { workspace = true, optional = true }
@@ -22,3 +24,10 @@ thiserror.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pipewire = { version = "0.10", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+objc2-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "NSArray", "NSDictionary", "NSString", "NSValue", "NSUUID", "NSObject"] }
+objc2-core-audio = { version = "0.3", optional = true, default-features = false, features = ["std", "AudioHardware", "objc2", "objc2-foundation", "objc2-core-audio-types"] }
+objc2-core-audio-types = { version = "0.3", optional = true, default-features = false, features = ["std", "CoreAudioBaseTypes"] }
+objc2-core-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "CFDictionary"] }

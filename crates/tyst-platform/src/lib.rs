@@ -4,6 +4,8 @@
 //! microphone and system audio through PipeWire (feature `pipewire`). Hotkeys, paste and window
 //! behavior arrive with later phases.
 
+#[cfg(all(target_os = "macos", feature = "macos-tap"))]
+pub mod macos_tap;
 #[cfg(feature = "mic")]
 pub mod mic;
 #[cfg(all(target_os = "linux", feature = "pipewire"))]

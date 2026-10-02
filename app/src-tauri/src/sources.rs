@@ -18,6 +18,8 @@ pub fn microphone() -> Option<SourceFactory> {
 pub fn system_audio() -> Option<SourceFactory> {
     #[cfg(all(target_os = "linux", feature = "pipewire"))]
     return Some(Box::new(|| Ok(Box::new(tyst_platform::pipewire::PipeWireSource::system_audio()) as _)));
+    #[cfg(all(target_os = "macos", feature = "macos-tap"))]
+    return Some(Box::new(|| Ok(Box::new(tyst_platform::macos_tap::SystemAudioTap::new()) as _)));
     #[allow(unreachable_code)]
     None
 }

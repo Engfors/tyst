@@ -25,7 +25,7 @@ pub struct MeetingArgs {
     /// Me from the default microphone.
     #[arg(long, conflicts_with = "me")]
     pub mic: bool,
-    /// Others from system audio (Linux: monitor of the default PipeWire sink).
+    /// Others from system audio (Linux: monitor of the default PipeWire sink; macOS: process tap).
     #[arg(long, conflicts_with = "others")]
     pub system: bool,
     /// Me from this file, played in real time.
@@ -129,6 +129,8 @@ fn mic_source() -> Result<SourceFactory> {
 fn system_source() -> Result<SourceFactory> {
     #[cfg(all(target_os = "linux", feature = "pipewire"))]
     return Ok(Box::new(|| Ok(Box::new(tyst_platform::pipewire::PipeWireSource::system_audio()) as _)));
+    #[cfg(all(target_os = "macos", feature = "macos-tap"))]
+    return Ok(Box::new(|| Ok(Box::new(tyst_platform::macos_tap::SystemAudioTap::new()) as _)));
     #[allow(unreachable_code)]
     {
         bail!("system audio capture is not available in this build")
