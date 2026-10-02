@@ -7,7 +7,9 @@ kind = "asr"
 lang = "sv"
 dir = "pianissimo-sv-onnx"
 hf_repo = "KlangAI/pianissimo-sv-onnx"
-hf_revision = "main"  # TODO: pin a commit once the repo has been inspected
+hf_revision = "63730c6021234f26b9bbae9a07a04fec39e7a52e"
+# int8 weights only; the repo also ships fp32 (+ external data), fp16 and int4 (~4 GB extra).
+hf_allow = ["*.int8.onnx", "nemo128.onnx", "vocab.txt", "tokenizer.model", "*.json", "README.md"]
 # Layout is auto-detected: sherpa-onnx (encoder/decoder/joiner + tokens.txt) or
 # onnx-asr (encoder-model + decoder_joint-model + vocab.txt).
 
