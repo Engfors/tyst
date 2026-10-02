@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
-use crate::transcript::{Segment, Session, SessionInfo};
+use crate::transcript::{Marker, Segment, Session, SessionInfo};
 use crate::{Error, Result};
 
 pub const JOURNAL_DIR: &str = ".tyst-journal";
@@ -19,6 +19,7 @@ pub const JOURNAL_DIR: &str = ".tyst-journal";
 enum Record {
     Session(SessionInfo),
     Segment(Segment),
+    Marker(Marker),
     Title { title: String },
     End { ended_at: DateTime<FixedOffset> },
 }
@@ -47,6 +48,10 @@ impl Journal {
     /// Appends a final segment and flushes it to disk.
     pub fn append(&mut self, segment: &Segment) -> Result<()> {
         self.write(&Record::Segment(segment.clone()))
+    }
+
+    pub fn mark(&mut self, marker: Marker) -> Result<()> {
+        self.write(&Record::Marker(marker))
     }
 
     pub fn set_title(&mut self, title: &str) -> Result<()> {
@@ -94,6 +99,7 @@ pub fn recover(path: &Path) -> Result<Session> {
     let file = File::open(path).map_err(|e| Error::io(path, e))?;
     let mut info: Option<SessionInfo> = None;
     let mut segments = Vec::new();
+    let mut markers = Vec::new();
     let mut title = None;
     let mut ended_at = None;
     let lines: Vec<String> =
@@ -106,6 +112,7 @@ pub fn recover(path: &Path) -> Result<Session> {
         match serde_json::from_str::<Record>(line) {
             Ok(Record::Session(s)) => info = Some(s),
             Ok(Record::Segment(s)) => segments.push(s),
+            Ok(Record::Marker(m)) => markers.push(m),
             Ok(Record::Title { title: t }) => title = Some(t),
             Ok(Record::End { ended_at: e }) => ended_at = Some(e),
             Err(_) if i == last => break,
@@ -117,7 +124,7 @@ pub fn recover(path: &Path) -> Result<Session> {
         let last_end = segments.iter().map(|s| s.end).max().unwrap_or_default();
         info.started_at + chrono::Duration::from_std(last_end).unwrap_or_default()
     });
-    Ok(Session { info, ended_at, title, segments })
+    Ok(Session { info, ended_at, title, segments, markers })
 }
 
 #[cfg(test)]
@@ -125,7 +132,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::transcript::{Channel, Lang, SegState, SpeakerLabels};
+    use crate::transcript::{Channel, Lang, MarkerKind, SegState, SpeakerLabels};
 
     fn info(id: &str) -> SessionInfo {
         SessionInfo {
@@ -179,6 +186,7 @@ mod tests {
         let dir = tmp("torn");
         let mut j = Journal::create(&dir, &info("s2")).unwrap();
         j.append(&seg(1, 5)).unwrap();
+        j.mark(Marker { at: Duration::from_secs(6), kind: MarkerKind::Paused }).unwrap();
         j.set_title("Planering").unwrap();
         let path = j.path().to_path_buf();
         drop(j);
@@ -187,6 +195,7 @@ mod tests {
         let s = recover(&path).unwrap();
         assert_eq!(s.segments.len(), 1);
         assert_eq!(s.title.as_deref(), Some("Planering"));
+        assert_eq!(s.markers, vec![Marker { at: Duration::from_secs(6), kind: MarkerKind::Paused }]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

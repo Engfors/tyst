@@ -63,6 +63,22 @@ pub struct Segment {
     pub edited: bool,
 }
 
+/// A note in the transcript that is not speech.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MarkerKind {
+    /// Capture was paused here (SPEC 8.3).
+    Paused,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Marker {
+    /// Offset from the session start.
+    #[serde(with = "duration_ms")]
+    pub at: Duration,
+    pub kind: MarkerKind,
+}
+
 /// Speaker labels written in the Markdown file (SPEC 7).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpeakerLabels {
@@ -105,6 +121,7 @@ pub struct Session {
     pub title: Option<String>,
     /// Final segments; order does not matter, the writer sorts by start time.
     pub segments: Vec<Segment>,
+    pub markers: Vec<Marker>,
 }
 
 impl Session {

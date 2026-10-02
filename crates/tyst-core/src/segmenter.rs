@@ -141,6 +141,21 @@ impl<D: SpeechDetector> Segmenter<D> {
             self.emit(start, tail, false, &mut events);
         }
         self.reset_state();
+        // Samples flushed from `pending` never went through the detector; count them anyway so
+        // the stream position stays the sample count.
+        self.current = self.buffer_start;
+        events
+    }
+
+    /// Ends any open segment (like [`flush`](Self::flush)) and moves the stream position forward to
+    /// `position` without audio, for a gap in capture (pause, device switch). Earlier positions
+    /// are ignored.
+    pub fn skip_to(&mut self, position: u64) -> Vec<SegmenterEvent> {
+        let events = self.flush();
+        if position > self.buffer_start {
+            self.buffer_start = position;
+            self.current = position;
+        }
         events
     }
 
@@ -444,5 +459,27 @@ mod tests {
         let segs = ended(&events);
         assert_eq!(segs.len(), 1);
         assert!((secs(segs[0].end()) - 2.5).abs() < 0.05);
+    }
+
+    #[test]
+    fn skip_to_closes_the_open_segment_and_keeps_stream_time() {
+        let mut seg = Segmenter::new(SegmenterConfig::default(), detector());
+        let mut events = seg.push(&audio(&[(0.5, false), (2.0, true)])).unwrap();
+        // A 10 s gap in capture while speech was open: the segment ends where the audio ended.
+        events.extend(seg.skip_to(12 * SR as u64 + 8_000));
+        let first = ended(&events);
+        assert_eq!(first.len(), 1);
+        assert!((secs(first[0].end()) - 2.5).abs() < 0.05, "{}", secs(first[0].end()));
+        assert_eq!(seg.position(), 12 * SR as u64 + 8_000);
+        // Speech after the gap is placed after it.
+        let mut later = seg.push(&audio(&[(1.0, false), (2.0, true), (1.0, false)])).unwrap();
+        later.extend(seg.flush());
+        let second = ended(&later);
+        assert_eq!(second.len(), 1);
+        assert!((secs(second[0].start) - 13.5).abs() < 0.1, "{}", secs(second[0].start));
+        // Skipping backwards does nothing.
+        let pos = seg.position();
+        assert!(seg.skip_to(0).is_empty());
+        assert_eq!(seg.position(), pos);
     }
 }
