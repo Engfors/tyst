@@ -1,6 +1,6 @@
 # 0002 · Language routing: fixed Pianissimo, English on request
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-02)
 - **Date:** 2026-10-02
 
 ## Context

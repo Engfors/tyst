@@ -1,6 +1,6 @@
 # Phase 0 report: model evaluation
 
-- **Status:** Draft for owner review (2026-10-02). Owner test set, FLEURS, Linux and M1 Max benches measured.
+- **Status:** Accepted by the owner (2026-10-02). Owner test set, FLEURS, Linux and M1 Max benches measured.
 - **Harness:** [`eval/`](../eval/README.md) · **ADRs:** [`docs/decisions/`](decisions/README.md)
 
 ## 1. Summary
@@ -150,7 +150,7 @@ M1 Max (macOS 26.6, CPU provider; CoreML not run):
 
 ## 5. Still open
 
-1. Owner confirmation of ADRs 0001–0004.
+1. ~~Owner confirmation of ADRs 0001–0004.~~ Done.
 2. Optional: CoreML execution provider on the M1 Max; not needed for the targets above.
 3. Optional: rerun the owner set with `lang_spans` on the `mixed` clips to get a real wrong-engine rate.
    This only matters if routing is kept.

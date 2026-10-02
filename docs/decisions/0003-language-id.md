@@ -1,6 +1,6 @@
 # 0003 · Language ID: none in v1
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-02)
 - **Date:** 2026-10-02
 
 ## Context

@@ -1,6 +1,6 @@
 # 0004 · Segmentation parameters
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-02)
 - **Date:** 2026-10-02
 
 ## Decision
