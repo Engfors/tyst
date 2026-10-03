@@ -366,6 +366,10 @@ fn worker_thread<D: SpeechDetector>(
     if shared.cancelled.load(Ordering::SeqCst) {
         return Err(Error::Other("dictation cancelled".into()));
     }
+    // Capture ended on its own before any audio came (the source failed to start).
+    if total == 0 && !shared.finishing.load(Ordering::SeqCst) {
+        return Err(Error::Other("capture ended before any audio arrived".into()));
+    }
     let wanted = mode_from_u8(shared.mode.load(Ordering::SeqCst));
     pipeline.router_mut().set_mode(wanted);
     let t0 = Instant::now();
