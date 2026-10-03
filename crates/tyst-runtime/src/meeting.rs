@@ -75,6 +75,8 @@ struct Recorder {
 struct Shared {
     started: Instant,
     paused: AtomicBool,
+    /// The user is dictating: the Me channel drops its audio (SPEC 15 q4).
+    dictating: AtomicBool,
     /// Session language (SPEC 6.3: Auto / Swedish / English), switchable while recording.
     mode: AtomicU8,
     recorder: Mutex<Recorder>,
@@ -178,6 +180,7 @@ impl Meeting {
         let shared = Arc::new(Shared {
             started: Instant::now(),
             paused: AtomicBool::new(false),
+            dictating: AtomicBool::new(false),
             mode: AtomicU8::new(mode_to_u8(opts.mode)),
             recorder: Mutex::new(Recorder { journal: Some(journal), ..Default::default() }),
             events,
@@ -243,6 +246,21 @@ impl Meeting {
             let _ = c.control.send(CaptureCmd::Pause);
         }
         log::info!("meeting paused at {:.1}s", marker.at.as_secs_f32());
+        Ok(())
+    }
+
+    /// While dictation runs, the Me channel leaves its audio out of the meeting (the dictated
+    /// text goes to another app, SPEC 8.4) and a Dictating marker takes its place.
+    pub fn set_dictating(&self, on: bool) -> Result<()> {
+        if self.shared.dictating.swap(on, Ordering::SeqCst) == on || !on {
+            return Ok(());
+        }
+        let marker = Marker { at: self.elapsed(), kind: MarkerKind::Dictating };
+        let mut rec = self.shared.recorder.lock().expect("recorder lock");
+        if let Some(j) = rec.journal.as_mut() {
+            j.mark(marker)?;
+        }
+        rec.markers.push(marker);
         Ok(())
     }
 
@@ -433,6 +451,7 @@ fn worker_thread<D: SpeechDetector>(
     let gap = (GAP.as_secs_f64() * SAMPLE_RATE as f64) as u64;
     let (mut level_sum, mut level_n) = (0.0f64, 0usize);
     let mut flushed_for_pause = false;
+    let mut dictating = false;
     let mut mode = pipeline.router_mut().mode();
     let fail = |e: tyst_core::Error| {
         log::error!("{channel:?} pipeline: {e}");
@@ -470,6 +489,18 @@ fn worker_thread<D: SpeechDetector>(
         }
         // Where this audio belongs on the session clock; a gap means capture was interrupted.
         let at = shared.position_at(chunk.captured_at).saturating_sub(pcm.len() as u64);
+        // Dictation: Me drops its audio, ending the open segment and moving its clock along.
+        let now_dictating = channel == Channel::Me && shared.dictating.load(Ordering::SeqCst);
+        if now_dictating || dictating {
+            match pipeline.skip_to(at) {
+                Ok(ev) => shared.record(channel, ev),
+                Err(e) => fail(e),
+            }
+            dictating = now_dictating;
+            if dictating {
+                continue;
+            }
+        }
         if at > pipeline.position() + gap {
             log::info!("{channel:?}: capture gap of {:.1}s", (at - pipeline.position()) as f64 / SAMPLE_RATE as f64);
             match pipeline.skip_to(at) {
@@ -521,11 +552,13 @@ mod tests {
     }
 
     /// Plays (seconds, loud?) pieces at 48 kHz in 20 ms chunks, `offset` later on the clock than
-    /// real time (to fake a capture gap), as fast as the worker takes them.
+    /// real time (to fake a capture gap), as fast as the worker takes them (or in real time when
+    /// `paced`).
     struct FakeSource {
         channel: Channel,
         pattern: Vec<(f32, bool)>,
         offset: Duration,
+        paced: bool,
         thread: Option<JoinHandle<()>>,
         stop: Arc<AtomicBool>,
         starts: Arc<StdMutex<usize>>,
@@ -538,7 +571,8 @@ mod tests {
             if *n > 1 {
                 return Ok(()); // resumed: nothing more to play
             }
-            let (channel, pattern, offset, stop) = (self.channel, self.pattern.clone(), self.offset, self.stop.clone());
+            let (channel, pattern, offset, stop, paced) =
+                (self.channel, self.pattern.clone(), self.offset, self.stop.clone(), self.paced);
             self.thread = Some(std::thread::spawn(move || {
                 let t0 = Instant::now() + offset;
                 let mut played = 0usize;
@@ -552,6 +586,9 @@ mod tests {
                             .collect();
                         played += 960;
                         let at = t0 + Duration::from_secs_f64(played as f64 / 48_000.0);
+                        if paced && let Some(d) = at.checked_duration_since(Instant::now()) {
+                            std::thread::sleep(d);
+                        }
                         if sink.send(AudioChunk { channel, sample_rate: 48_000, samples, captured_at: at }).is_err() {
                             return;
                         }
@@ -576,11 +613,21 @@ mod tests {
     }
 
     fn source(channel: Channel, pattern: Vec<(f32, bool)>, offset: Duration) -> (Channel, SourceFactory) {
+        source_with(channel, pattern, offset, false)
+    }
+
+    fn source_with(
+        channel: Channel,
+        pattern: Vec<(f32, bool)>,
+        offset: Duration,
+        paced: bool,
+    ) -> (Channel, SourceFactory) {
         let f: SourceFactory = Box::new(move || {
             Ok(Box::new(FakeSource {
                 channel,
                 pattern,
                 offset,
+                paced,
                 thread: None,
                 stop: Arc::new(AtomicBool::new(false)),
                 starts: Arc::new(StdMutex::new(0)),
@@ -683,6 +730,29 @@ mod tests {
         assert_eq!(orphans.len(), 1);
         let recovered = tyst_core::journal::recover(&orphans[0]).unwrap();
         assert_eq!(recovered.markers.len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn dictation_leaves_me_out_and_writes_a_marker() {
+        let dir = tmp("dictating");
+        // Me speaks from 0.5 s to 3.5 s; dictation covers 1.0 s to 2.5 s of it.
+        let me = source_with(Channel::Me, vec![(0.5, false), (3.0, true), (1.0, false)], Duration::ZERO, true);
+        let (meeting, _rx) = start(&dir, vec![me]);
+        std::thread::sleep(Duration::from_millis(1000));
+        meeting.set_dictating(true).unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        meeting.set_dictating(false).unwrap();
+        std::thread::sleep(Duration::from_millis(1600));
+        let stopped = meeting.stop().unwrap();
+        let s = stopped.session();
+        assert_eq!(s.markers.len(), 1);
+        assert_eq!(s.markers[0].kind, MarkerKind::Dictating);
+        let total: f32 = s.segments.iter().map(|x| (x.end - x.start).as_secs_f32()).sum();
+        assert!(total < 2.0, "dictated audio left out: {:?}", s.segments);
+        for seg in &s.segments {
+            assert!(seg.end <= Duration::from_millis(1200) || seg.start >= Duration::from_millis(2400), "{seg:?}");
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

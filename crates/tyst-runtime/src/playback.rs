@@ -26,16 +26,22 @@ pub struct FilePlayback {
 impl FilePlayback {
     pub fn open(path: &Path, channel: Channel, speed: f64) -> Result<Self, CaptureError> {
         let audio = tyst_core::audio_file::decode_mono(path).map_err(|e| CaptureError::Device(e.to_string()))?;
-        Ok(Self {
+        let name = format!("file:{}", path.file_name().unwrap_or_default().to_string_lossy());
+        Ok(Self::from_audio(audio, channel, speed, name))
+    }
+
+    /// Plays audio already in memory.
+    pub fn from_audio(audio: MonoAudio, channel: Channel, speed: f64, name: String) -> Self {
+        Self {
             channel,
             audio: Arc::new(audio),
             speed,
-            name: format!("file:{}", path.file_name().unwrap_or_default().to_string_lossy()),
+            name,
             position: Arc::default(),
             stop: Arc::default(),
             finished: Arc::default(),
             thread: None,
-        })
+        }
     }
 
     /// True once the whole file has been played.

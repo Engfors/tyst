@@ -90,9 +90,21 @@ impl Runtime {
 
     /// A pipeline for one channel, with its own VAD and router.
     pub fn pipeline(&self, channel: Channel, partials: bool) -> Result<ChannelPipeline<SileroVad>> {
-        let vad = SileroVad::load(&self.vad_path)?;
         let initial = if self.mode == LanguageMode::English { Lang::En } else { Lang::Sv };
-        let router = FixedRouter::new(self.mode, initial, Duration::from_millis(1500));
+        self.pipeline_with(channel, partials, self.mode, initial)
+    }
+
+    /// [`pipeline`](Self::pipeline) in language `mode`, starting from the language `initial`
+    /// (short segments keep it).
+    pub fn pipeline_with(
+        &self,
+        channel: Channel,
+        partials: bool,
+        mode: LanguageMode,
+        initial: Lang,
+    ) -> Result<ChannelPipeline<SileroVad>> {
+        let vad = SileroVad::load(&self.vad_path)?;
+        let router = FixedRouter::new(mode, initial, Duration::from_millis(1500));
         Ok(ChannelPipeline::new(
             channel,
             PipelineConfig { partials, ..Default::default() },
