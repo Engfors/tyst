@@ -17,8 +17,8 @@
 | Paste into the window that was active at start | KWin script remembers and re-activates the window; RemoteDesktop portal sends Ctrl+V (Ctrl+Shift+V in terminals), `ydotool` fallback; macOS: NSWorkspace + CGEvent Cmd+V |
 | Clipboard restored after paste | `desktop.rs`, 500 ms after the keystroke; the transient text is hidden from clipboard history |
 | Esc cancels, Tab cycles Auto → SV → EN | while listening the switch applies to the next segment; in preview the kept audio is decoded again |
-| Dictation during a meeting (SPEC 15 q4 as proposed) | the Me channel skips dictated audio and the transcript gets a `*(dictating…)*` marker |
-| Meeting shortcut Ctrl+Shift+Å (SPEC 15 q3 as proposed) | same portal session |
+| Dictation during a meeting (SPEC 15 q4, confirmed) | the Me channel skips dictated audio and the transcript gets a `*(dictating…)*` marker |
+| Meeting shortcut Ctrl+Shift+Å (SPEC 15 q3, confirmed) | same portal session |
 
 Also: a Dictation settings tab, an onboarding step (shortcut + paste permission), a tray item,
 `tyst --dictate` for binding a key by hand, and `tyst-cli dictate` (`--mic`, or `--simulate` files
@@ -63,7 +63,9 @@ Steps: Arch test steps shared with the owner (five apps, Swedish characters, lat
 restore, hold vs tap, Esc/Tab, direct mode, dictation during a meeting, CLI latency on the owner's clips).
 Results: pending.
 
-## 6. Open questions
+## 6. Decisions
 
-SPEC 15 q3 (meeting shortcut), q4 (exclude dictated audio from Me) and q5 (hybrid trigger) are built
-as proposed and await the owner's confirmation.
+The owner confirmed the SPEC 15 proposals on 2026-10-03, as built:
+- q3: meeting shortcut Ctrl+Shift+Å (Cmd+Shift+Å on macOS).
+- q4: dictated audio is left out of the meeting's Me channel, with a *(dictating…)* marker.
+- q5: hybrid trigger (tap toggles, hold is push-to-talk); toggle-only and hold-only stay as settings.
