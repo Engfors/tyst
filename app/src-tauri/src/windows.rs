@@ -183,7 +183,7 @@ pub fn show_pill(app: &AppHandle, focus: bool) -> Option<WebviewWindow> {
         }
     };
     let _ = w.set_focusable(focus);
-    if !crate::desktop::places_windows() {
+    if crate::desktop::places_windows() {
         place_pill(&w);
     }
     let _ = w.show();
