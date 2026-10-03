@@ -115,7 +115,7 @@ pub fn run(args: MeetingArgs) -> Result<()> {
     Ok(())
 }
 
-fn mic_source() -> Result<SourceFactory> {
+pub(crate) fn mic_source() -> Result<SourceFactory> {
     #[cfg(all(target_os = "linux", feature = "pipewire"))]
     return Ok(Box::new(|| Ok(Box::new(tyst_platform::pipewire::PipeWireSource::microphone()) as _)));
     #[cfg(all(not(all(target_os = "linux", feature = "pipewire")), feature = "mic"))]
