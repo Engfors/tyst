@@ -3,7 +3,7 @@
     python3 packaging/make_icons.py
 
 Writes app/src-tauri/icons/{icon.png,32x32.png,128x128.png,128x128@2x.png} and the tray icons
-tray-{idle,recording,paused,error}.png. Run `npx tauri icon app/src-tauri/icons/icon.png` from
+tray-{idle,recording,paused,error,dictating}.png. Run `npx tauri icon app/src-tauri/icons/icon.png` from
 app/ui afterwards to regenerate icon.icns / icon.ico for bundling.
 """
 
@@ -94,6 +94,7 @@ def main():
         "recording": [circle(0.78, 0.78, 0.2, badge_ring), circle(0.78, 0.78, 0.15, (230, 57, 70, 255))],
         "paused": [circle(0.78, 0.78, 0.2, badge_ring), circle(0.78, 0.78, 0.15, (240, 170, 30, 255))],
         "error": [circle(0.78, 0.78, 0.2, badge_ring), circle(0.78, 0.78, 0.15, (120, 120, 120, 255))],
+        "dictating": [circle(0.78, 0.78, 0.2, badge_ring), circle(0.78, 0.78, 0.15, (59, 111, 224, 255))],
     }
     plate = circle(0.45, 0.45, 0.44, (242, 244, 248, 230))
     for state, badge in states.items():

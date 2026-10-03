@@ -1,5 +1,5 @@
 //! Menu bar / system tray (SPEC 8.2): the app's only permanent presence (no Dock icon, no
-//! taskbar entry). The icon shows idle, recording, paused or error.
+//! taskbar entry). The icon shows idle, recording, paused, dictating or error.
 
 use std::sync::Mutex;
 
@@ -9,6 +9,7 @@ use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager, Wry};
 use tyst_core::router::LanguageMode;
 
+use crate::dictation;
 use crate::state::{self, AppState, Phase};
 use crate::windows;
 
@@ -17,8 +18,9 @@ pub struct Tray {
     start_stop: MenuItem<Wry>,
     pause: MenuItem<Wry>,
     show: MenuItem<Wry>,
+    dictate: MenuItem<Wry>,
     lang: [CheckMenuItem<Wry>; 3],
-    last: Mutex<Option<(Phase, bool)>>,
+    last: Mutex<Option<(Phase, bool, bool)>>,
 }
 
 const MODES: [LanguageMode; 3] = [LanguageMode::Auto, LanguageMode::Swedish, LanguageMode::English];
@@ -28,6 +30,7 @@ fn icon(name: &str) -> Image<'static> {
         "recording" => include_bytes!("../icons/tray-recording.png"),
         "paused" => include_bytes!("../icons/tray-paused.png"),
         "error" => include_bytes!("../icons/tray-error.png"),
+        "dictating" => include_bytes!("../icons/tray-dictating.png"),
         _ => include_bytes!("../icons/tray-idle.png"),
     };
     Image::from_bytes(bytes).expect("tray icon is a valid PNG")
@@ -37,6 +40,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let start_stop = MenuItem::with_id(app, "start_stop", "Start meeting transcription", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause", false, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show meeting window", true, None::<&str>)?;
+    let dictate = MenuItem::with_id(app, "dictate", "Start dictation", true, None::<&str>)?;
     let lang = [
         CheckMenuItem::with_id(app, "lang_auto", "Auto", true, true, None::<&str>)?,
         CheckMenuItem::with_id(app, "lang_sv", "Svenska", true, false, None::<&str>)?,
@@ -45,6 +49,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let lang_menu = SubmenuBuilder::new(app, "Language").items(&[&lang[0], &lang[1], &lang[2]]).build()?;
     let menu: Menu<Wry> = MenuBuilder::new(app)
         .items(&[&start_stop, &pause, &show])
+        .item(&PredefinedMenuItem::separator(app)?)
+        .item(&dictate)
         .item(&PredefinedMenuItem::separator(app)?)
         .item(&lang_menu)
         .item(&MenuItem::with_id(app, "open_folder", "Open transcripts folder", true, None::<&str>)?)
@@ -61,7 +67,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
         .build(app)?;
-    app.manage(Tray { icon, start_stop, pause, show, lang, last: Mutex::new(None) });
+    app.manage(Tray { icon, start_stop, pause, show, dictate, lang, last: Mutex::new(None) });
     refresh(app);
     Ok(())
 }
@@ -77,6 +83,10 @@ fn on_menu(app: &AppHandle, id: &str) {
             Phase::Starting => Ok(()),
         },
         "pause" => state::toggle_pause(app),
+        "dictate" => {
+            dictation::send(app, dictation::Cmd::Toggle);
+            Ok(())
+        }
         "show" => {
             windows::toggle_meeting(app);
             Ok(())
@@ -125,17 +135,20 @@ pub fn refresh(app: &AppHandle) {
     }
     let visible = windows::meeting_visible(app);
     let _ = tray.show.set_text(if visible { "Hide meeting window" } else { "Show meeting window" });
+    let dictating = dictation::phase(app).recording();
+    let _ = tray.dictate.set_text(if dictating { "Stop dictation" } else { "Start dictation" });
     let mut last = tray.last.lock().expect("tray lock");
-    if *last == Some((phase, warning)) {
+    if *last == Some((phase, warning, dictating)) {
         return;
     }
-    *last = Some((phase, warning));
+    *last = Some((phase, warning, dictating));
     let (label, pause, pause_enabled, icon_name, tip) = match phase {
         Phase::Idle | Phase::Naming => ("Start meeting transcription", "Pause", false, "idle", "Tyst"),
         Phase::Starting => ("Starting…", "Pause", false, "recording", "Tyst: starting"),
         Phase::Recording => ("Stop meeting transcription", "Pause", true, "recording", "Tyst: recording"),
         Phase::Paused => ("Stop meeting transcription", "Resume", true, "paused", "Tyst: paused"),
     };
+    let (icon_name, tip) = if dictating { ("dictating", "Tyst: dictating") } else { (icon_name, tip) };
     let icon_name = if warning { "error" } else { icon_name };
     let _ = tray.start_stop.set_text(label);
     let _ = tray.start_stop.set_enabled(phase != Phase::Starting);

@@ -11,8 +11,10 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+use tyst_core::pipeline::ChannelPipeline;
 use tyst_core::router::LanguageMode;
 use tyst_core::transcript::{Channel, Lang};
+use tyst_core::vad::SileroVad;
 use tyst_core::vocabulary::VocabularyRules;
 use tyst_runtime::meeting::{Meeting, MeetingEvent, MeetingOptions, StoppedMeeting};
 use tyst_runtime::{EngineOptions, Runtime};
@@ -203,6 +205,38 @@ impl AppState {
             *rt = Some(loaded);
         }
         Ok(())
+    }
+
+    /// Changes settings from the app itself (not the settings form) and saves them.
+    pub fn update_config(&self, f: impl FnOnce(&mut Config)) {
+        let mut cfg = self.config.lock().expect("config lock");
+        f(&mut cfg);
+        if let Err(e) = cfg.save() {
+            log::error!("saving config: {e}");
+        }
+    }
+
+    /// A live pipeline for dictation (loads the models first if needed).
+    pub fn dictation_pipeline(&self, mode: LanguageMode, lang: Lang) -> Result<ChannelPipeline<SileroVad>, String> {
+        self.ensure_runtime()?;
+        let rt = self.runtime.lock().expect("runtime lock");
+        rt.as_ref().ok_or("models not loaded")?.pipeline_with(Channel::Me, true, mode, lang).map_err(|e| e.to_string())
+    }
+
+    /// A pipeline without partials, for decoding kept dictation audio again.
+    pub fn retranscribe_pipeline(&self, mode: LanguageMode, lang: Lang) -> Result<ChannelPipeline<SileroVad>, String> {
+        self.ensure_runtime()?;
+        let rt = self.runtime.lock().expect("runtime lock");
+        rt.as_ref().ok_or("models not loaded")?.pipeline_with(Channel::Me, false, mode, lang).map_err(|e| e.to_string())
+    }
+
+    /// Leaves dictated speech out of a recording meeting's Me channel (SPEC 15 q4).
+    pub fn set_meeting_dictating(&self, on: bool) {
+        if let Session::Recording(m) = &*self.session.lock().expect("session lock")
+            && let Err(e) = m.set_dictating(on)
+        {
+            log::error!("marking dictation in the meeting: {e}");
+        }
     }
 
     /// Drops the loaded models (thread count or models folder changed); reloaded on next use.
