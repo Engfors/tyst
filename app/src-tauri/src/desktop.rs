@@ -121,11 +121,9 @@ impl Desktop {
     /// Shows the pill; on KDE KWin then moves it to the bottom centre of the active screen and,
     /// with `focus`, activates it.
     pub async fn show_pill(&self, app: &AppHandle, focus: bool) {
-        if windows::show_pill(app, focus).is_none() {
-            return;
-        }
+        let shown = windows::show_pill(app, focus).is_some();
         #[cfg(target_os = "linux")]
-        if let Some(k) = self.kwin().await {
+        if shown && let Some(k) = self.kwin().await {
             // A freshly shown window is mapped a moment later; try again briefly.
             for _ in 0..10 {
                 match k.place_bottom_center(windows::PILL_TITLE, windows::PILL_BOTTOM as i32, focus).await {
@@ -138,6 +136,8 @@ impl Desktop {
                 }
             }
         }
+        #[cfg(not(target_os = "linux"))]
+        let _ = shown;
     }
 
     /// Gives the keyboard back to the target window.

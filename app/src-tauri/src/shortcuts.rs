@@ -18,6 +18,7 @@ use crate::state::{self, AppState};
 pub const DICTATE: &str = "dictate";
 pub const MEETING: &str = "toggle-meeting";
 /// The app id the portal knows Tyst by (matches the bundle identifier and the .desktop file).
+#[cfg(target_os = "linux")]
 pub const APP_ID: &str = "com.engfors.tyst";
 
 #[derive(Debug, Clone, Default, Serialize)]
