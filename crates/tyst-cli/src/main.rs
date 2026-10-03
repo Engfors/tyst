@@ -5,6 +5,7 @@
 
 mod bench;
 mod live;
+mod meeting;
 mod models_cmd;
 mod setup;
 mod stats;
@@ -27,6 +28,8 @@ enum Command {
     Transcribe(transcribe::TranscribeArgs),
     /// Live transcription from the microphone (or a file played in real time), with latency and CPU stats.
     Live(live::LiveArgs),
+    /// Two-channel meeting (Me + Others) from the mic and system audio, or files; saves Markdown.
+    Meeting(meeting::MeetingArgs),
     /// Score a clip manifest (eval/manifest.toml format): WER, term accuracy, speed, memory.
     Bench(bench::BenchArgs),
     /// List, verify or download the pinned models.
@@ -58,6 +61,7 @@ fn main() {
     let result = match cli.command {
         Command::Transcribe(a) => transcribe::run(a),
         Command::Live(a) => live::run(a),
+        Command::Meeting(a) => meeting::run(a),
         Command::Bench(a) => bench::run(a),
         Command::Models(a) => models_cmd::run(a),
         Command::Recover(a) => transcribe::recover(a),

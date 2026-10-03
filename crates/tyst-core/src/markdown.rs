@@ -4,7 +4,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::transcript::{Channel, Session};
+use crate::transcript::{Channel, MarkerKind, Session};
 use crate::{Error, Result};
 
 const DEFAULT_TITLE: &str = "Meeting";
@@ -32,10 +32,22 @@ pub fn render(session: &Session) -> String {
     out.push_str("---\n\n");
     out.push_str(&format!("# {title}\n"));
 
-    for (channel, text) in turns(session) {
-        out.push_str(&format!("\n**{}:** {}\n", info.labels.get(channel), text));
+    for block in blocks(session) {
+        match block {
+            Block::Turn(channel, text) => out.push_str(&format!("\n**{}:** {}\n", info.labels.get(channel), text)),
+            Block::Marker(MarkerKind::Paused) => out.push_str("\n*Paused*\n"),
+        }
     }
     out
+}
+
+/// The file name [`save`] tries first (it adds ` (2)` etc. when that exists).
+pub fn file_name(session: &Session) -> String {
+    format!("{}.md", file_stem(session))
+}
+
+fn file_stem(session: &Session) -> String {
+    format!("{} {}", session.info.started_at.format("%Y-%m-%d %H%M"), sanitize_file_name(&display_title(session)))
 }
 
 /// Writes the transcript into `dir` as `YYYY-MM-DD HHmm <title>.md`, never overwriting an
@@ -43,8 +55,7 @@ pub fn render(session: &Session) -> String {
 pub fn save(session: &Session, dir: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
     let body = render(session);
-    let stem =
-        format!("{} {}", session.info.started_at.format("%Y-%m-%d %H%M"), sanitize_file_name(&display_title(session)));
+    let stem = file_stem(session);
     for n in 1.. {
         let name = if n == 1 { format!("{stem}.md") } else { format!("{stem} ({n}).md") };
         let path = dir.join(name);
@@ -61,22 +72,46 @@ pub fn save(session: &Session, dir: &Path) -> Result<PathBuf> {
     unreachable!()
 }
 
-/// Consecutive same-channel segments merged, in start order.
-pub fn turns(session: &Session) -> Vec<(Channel, String)> {
+/// A paragraph of the transcript body.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Block {
+    /// Consecutive segments of one channel, merged.
+    Turn(Channel, String),
+    Marker(MarkerKind),
+}
+
+/// Turns (consecutive same-channel segments merged) and markers, in time order. A marker ends
+/// the turn before it; repeated markers with no speech between them collapse into one.
+pub fn blocks(session: &Session) -> Vec<Block> {
     let mut segs: Vec<_> = session.segments.iter().filter(|s| !s.text.trim().is_empty()).collect();
     segs.sort_by_key(|s| (s.start, s.id));
-    let mut out: Vec<(Channel, String)> = Vec::new();
+    let mut markers = session.markers.clone();
+    markers.sort_by_key(|m| m.at);
+    let mut markers = markers.into_iter().peekable();
+    let mut out: Vec<Block> = Vec::new();
     for s in segs {
+        while let Some(m) = markers.next_if(|m| m.at <= s.start) {
+            push_marker(&mut out, m.kind);
+        }
         let text = s.text.trim();
         match out.last_mut() {
-            Some((ch, acc)) if *ch == s.channel => {
+            Some(Block::Turn(ch, acc)) if *ch == s.channel => {
                 acc.push(' ');
                 acc.push_str(text);
             }
-            _ => out.push((s.channel, text.to_string())),
+            _ => out.push(Block::Turn(s.channel, text.to_string())),
         }
     }
+    for m in markers {
+        push_marker(&mut out, m.kind);
+    }
     out
+}
+
+fn push_marker(out: &mut Vec<Block>, kind: MarkerKind) {
+    if out.last() != Some(&Block::Marker(kind)) {
+        out.push(Block::Marker(kind));
+    }
 }
 
 fn display_title(session: &Session) -> String {
@@ -142,7 +177,7 @@ mod tests {
     use chrono::DateTime;
 
     use super::*;
-    use crate::transcript::{Lang, SegState, Segment, SessionInfo, SpeakerLabels};
+    use crate::transcript::{Lang, Marker, SegState, Segment, SessionInfo, SpeakerLabels};
 
     fn seg(id: u64, channel: Channel, start_s: u64, lang: Lang, text: &str) -> Segment {
         Segment {
@@ -178,6 +213,7 @@ mod tests {
                 seg(6, Channel::Me, 25, Lang::En, "  "),
                 seg(7, Channel::Me, 30, Lang::En, "Sure, no problem."),
             ],
+            markers: vec![],
         }
     }
 
@@ -220,6 +256,27 @@ models: [pianissimo-sv-int8@63730c6]\n\
         assert!(md.contains("title: Meeting\n"));
         assert!(md.contains("**Emil:** Hej allihop"));
         assert!(md.contains("**Övriga:** Låter bra."));
+    }
+
+    #[test]
+    fn pause_markers_split_turns() {
+        let mut s = session(None);
+        s.markers = vec![
+            Marker { at: Duration::from_secs(10), kind: MarkerKind::Paused },
+            Marker { at: Duration::from_secs(11), kind: MarkerKind::Paused },
+            Marker { at: Duration::from_secs(40), kind: MarkerKind::Paused },
+        ];
+        let md = render(&s);
+        let body = md.split("# Meeting\n").nth(1).unwrap();
+        assert_eq!(
+            body,
+            "\n**Me:** Hej allihop, vi börjar med Terraform.\n\
+\n**Others:** Låter bra.\n\
+\n*Paused*\n\
+\n**Others:** Vi har frågor. Sorry I'm late.\n\
+\n**Me:** Sure, no problem.\n\
+\n*Paused*\n"
+        );
     }
 
     #[test]

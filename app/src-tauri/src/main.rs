@@ -1,0 +1,215 @@
+//! Tyst desktop app (SPEC 4, Phase 2): tray icon, floating meeting window, onboarding and
+//! settings on top of `tyst-runtime`. Never logs transcript text or audio.
+
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod commands;
+mod config;
+#[cfg(target_os = "linux")]
+mod kwin;
+mod sources;
+mod state;
+mod tray;
+mod windows;
+
+use tauri::{AppHandle, Manager, RunEvent};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tyst_core::journal;
+use tyst_core::markdown;
+
+use crate::config::Config;
+use crate::state::AppState;
+
+fn main() {
+    // WebKitGTK's DMA-BUF renderer kills the app on some Wayland setups (notably NVIDIA) with
+    // "Error 71 (Protocol error) dispatching to Wayland display". Our windows are small, so the
+    // shared-memory path costs nothing noticeable. An explicit setting by the user wins.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        // SAFETY: still single-threaded; nothing has read the environment yet.
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+    }
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let config = Config::load();
+
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // A second launch passes its command line to the running app.
+            if !handle_args(app, &args) {
+                match app.state::<AppState>().phase() {
+                    state::Phase::Idle => windows::show_settings(app, None),
+                    _ => windows::show_meeting(app),
+                }
+            }
+        }))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::Builder::new().build())
+        .manage(AppState::new(config))
+        .manage(commands::FetchState::default())
+        .invoke_handler(tauri::generate_handler![
+            commands::app_state,
+            commands::meeting_start,
+            commands::meeting_stop,
+            commands::meeting_toggle_pause,
+            commands::meeting_set_language,
+            commands::meeting_preview,
+            commands::meeting_save,
+            commands::meeting_window_hide,
+            commands::meeting_window_compact,
+            commands::open_path,
+            commands::reveal_path,
+            commands::open_transcripts_folder,
+            commands::config_get,
+            commands::config_set,
+            commands::pick_folder,
+            commands::models_status,
+            commands::models_fetch,
+            commands::models_cancel,
+            commands::models_verify,
+            commands::models_installed,
+            commands::vocabulary_get,
+            commands::vocabulary_set,
+            commands::vocabulary_import,
+            commands::vocabulary_export,
+            commands::audio_test,
+            commands::onboarding_finish,
+            commands::show_settings,
+            commands::install_window_rule,
+        ])
+        .setup(|app| {
+            // Menu bar app: no Dock icon (SPEC 8.2).
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            let handle = app.handle().clone();
+            tray::build(&handle)?;
+            #[cfg(target_os = "linux")]
+            if let Err(e) = kwin::install_rule() {
+                log::warn!("KWin rule: {e}");
+            }
+            let cfg = handle.state::<AppState>().config();
+            if !cfg.onboarded {
+                windows::show_onboarding(&handle);
+            } else {
+                if tyst_runtime::fetch::installed(&tyst_runtime::fetch::DEFAULT_MODELS, &cfg.models_dir()) {
+                    AppState::preload(&handle);
+                }
+                let args: Vec<String> = std::env::args().collect();
+                handle_args(&handle, &args);
+                std::thread::spawn(move || offer_recovery(&handle));
+            }
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("building the Tauri app");
+
+    app.run(|app, event| match event {
+        // Closing the last window keeps the tray app running; only Quit exits.
+        RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
+        RunEvent::Exit => {
+            state::shutdown(app);
+            let _ = app.state::<AppState>().config().save();
+        }
+        _ => {}
+    });
+}
+
+/// Command-line actions, for desktop shortcuts and scripts: `tyst --toggle-meeting` starts or
+/// stops a meeting (in the running instance if there is one), `--pause` pauses or resumes,
+/// `--show-meeting` and `--settings` open windows. Returns whether an action was found.
+fn handle_args(app: &AppHandle, args: &[String]) -> bool {
+    let mut handled = false;
+    for a in args.iter().skip(1) {
+        let r = match a.as_str() {
+            "--toggle-meeting" => match app.state::<AppState>().phase() {
+                state::Phase::Recording | state::Phase::Paused => {
+                    state::stop_meeting_in_background(app);
+                    Ok(())
+                }
+                state::Phase::Starting => Ok(()),
+                _ => state::start_meeting(app),
+            },
+            "--pause" => state::toggle_pause(app),
+            "--show-meeting" => {
+                windows::show_meeting(app);
+                Ok(())
+            }
+            "--settings" => {
+                windows::show_settings(app, None);
+                Ok(())
+            }
+            _ => continue,
+        };
+        handled = true;
+        if let Err(e) = r {
+            log::error!("{a}: {e}");
+            notify_error(app, &e);
+        }
+    }
+    handled
+}
+
+/// Crash recovery (SPEC 6.6): every journal left by a session that never saved offers to become
+/// a Markdown file.
+fn offer_recovery(app: &AppHandle) {
+    let Some(dir) = app.state::<AppState>().config().transcripts_dir else { return };
+    let orphans = match journal::find_orphans(&dir) {
+        Ok(o) => o,
+        Err(e) => {
+            log::error!("looking for journals: {e}");
+            return;
+        }
+    };
+    for path in orphans {
+        let session = match journal::recover(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("unreadable journal {}: {e}", path.display());
+                continue;
+            }
+        };
+        let when = session.info.started_at.format("%Y-%m-%d %H:%M");
+        let recover = app
+            .dialog()
+            .message(format!(
+                "Tyst found an unsaved meeting from {when} ({}). Recover it as a Markdown file?",
+                match session.segments.len() {
+                    1 => "1 passage".to_string(),
+                    n => format!("{n} passages"),
+                }
+            ))
+            .title("Recover unsaved meeting")
+            .kind(MessageDialogKind::Info)
+            .buttons(MessageDialogButtons::OkCancelCustom("Recover".into(), "Not now".into()))
+            .blocking_show();
+        if !recover {
+            continue;
+        }
+        match markdown::save(&session, &dir) {
+            Ok(saved) => {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    log::error!("removing recovered journal: {e}");
+                }
+                log::info!("recovered meeting {}", session.info.id);
+                let _ = app.opener_reveal(&saved);
+            }
+            Err(e) => notify_error(app, &format!("Could not save the recovered meeting: {e}")),
+        }
+    }
+}
+
+trait Reveal {
+    fn opener_reveal(&self, path: &std::path::Path) -> Result<(), String>;
+}
+
+impl Reveal for AppHandle {
+    fn opener_reveal(&self, path: &std::path::Path) -> Result<(), String> {
+        use tauri_plugin_opener::OpenerExt;
+        self.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
+    }
+}
+
+/// Shows an error to the user as a native dialog.
+pub fn notify_error(app: &AppHandle, message: &str) {
+    app.dialog().message(message).title("Tyst").kind(MessageDialogKind::Error).show(|_| {});
+}

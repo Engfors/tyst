@@ -211,6 +211,16 @@ impl<D: SpeechDetector> ChannelPipeline<D> {
         Ok(out)
     }
 
+    /// Finalizes an open segment and moves the stream position to `position` (16 kHz samples)
+    /// without audio, so segment times keep following the wall clock across a capture gap.
+    pub fn skip_to(&mut self, position: u64) -> Result<Vec<PipelineEvent>> {
+        let mut out = Vec::new();
+        for e in self.segmenter.skip_to(position) {
+            self.handle(e, &mut out)?;
+        }
+        Ok(out)
+    }
+
     fn handle(&mut self, event: SegmenterEvent, out: &mut Vec<PipelineEvent>) -> Result<()> {
         match event {
             SegmenterEvent::Started { .. } => {

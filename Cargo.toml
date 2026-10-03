@@ -1,17 +1,18 @@
 [workspace]
 resolver = "3"
-members = ["crates/tyst-core", "crates/tyst-platform", "crates/tyst-cli"]
+members = ["crates/tyst-core", "crates/tyst-platform", "crates/tyst-runtime", "crates/tyst-cli", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.90"
 license = "UNLICENSED"
 repository = "https://github.com/Engfors/tyst"
 
 [workspace.dependencies]
 tyst-core = { path = "crates/tyst-core" }
 tyst-platform = { path = "crates/tyst-platform", default-features = false }
+tyst-runtime = { path = "crates/tyst-runtime" }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }

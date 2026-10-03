@@ -291,7 +291,8 @@ pub fn run(args: LiveArgs) -> Result<()> {
     if let (Some(dir), Some(journal)) = (&args.out_dir, journal) {
         let mut info = info;
         info.models = rt.model_ids();
-        let session = Session { info, ended_at: Local::now().fixed_offset(), title: args.title, segments };
+        let session =
+            Session { info, ended_at: Local::now().fixed_offset(), title: args.title, segments, markers: vec![] };
         let path = markdown::save(&session, dir)?;
         journal.remove()?;
         eprintln!("saved {}", path.display());

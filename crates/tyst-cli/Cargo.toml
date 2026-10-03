@@ -11,8 +11,12 @@ name = "tyst-cli"
 path = "src/main.rs"
 
 [features]
-default = ["mic"]
+default = ["mic", "pipewire", "macos-tap"]
 mic = ["tyst-platform/mic"]
+# Linux only (ignored elsewhere): microphone and system audio through PipeWire for `meeting`.
+pipewire = ["tyst-platform/pipewire"]
+# macOS only (ignored elsewhere): system audio through a Core Audio process tap.
+macos-tap = ["tyst-platform/macos-tap"]
 
 [dependencies]
 anyhow.workspace = true
@@ -26,4 +30,4 @@ serde_json.workspace = true
 toml.workspace = true
 tyst-core.workspace = true
 tyst-platform.workspace = true
-ureq.workspace = true
+tyst-runtime.workspace = true
