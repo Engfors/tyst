@@ -69,6 +69,8 @@ pub struct Segment {
 pub enum MarkerKind {
     /// Capture was paused here (SPEC 8.3).
     Paused,
+    /// The user dictated into another app here; that speech is left out (SPEC 8.4, 15 q4).
+    Dictating,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
