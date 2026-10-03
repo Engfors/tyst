@@ -1,7 +1,7 @@
 # Phase 2 report: meeting app
 
-- **Status:** In progress. Built and tested end to end on Linux (container); waiting for the owner's
-  acceptance run on Arch Linux / KDE (section 5).
+- **Status:** Accepted on Arch Linux / KDE Plasma (Wayland) by the owner on 2026-10-03 (section 5).
+  macOS items remain open (section 6).
 - **Code:** `app/` (Tauri v2 + Svelte 5), `crates/tyst-runtime`, capture in `crates/tyst-platform`.
 
 ## 1. Scope decision
@@ -77,6 +77,35 @@ stealing focus; Markdown saved correctly; the app survives a headset unplug mid-
 works (kill -9 mid-meeting → recovery prompt on relaunch). Step-by-step instructions for Arch are in
 the project files (`phase2/arch-test-steps.md`). The app is built with
 `cd app/ui && npm ci && npm run tauri build -- --no-bundle`.
+
+Owner's run (Arch Linux, Ryzen 7 7800X3D, PipeWire, KDE Plasma on Wayland), 2026-10-03:
+
+| run | result |
+|---|---|
+| A. Teams call, 30 min | pass |
+| B. Google Meet call, 30 min | pass |
+| C. Headset unplug mid-call | pass |
+| D. `kill -9` → recovery prompt on relaunch | pass |
+| E. Window position remembered after restart | pass |
+
+The longest session was 72 minutes (401 segments). The first launch on Wayland crashed with
+"Error 71 (Protocol error)" in WebKitGTK's DMA-BUF renderer; the app now turns that renderer off on
+Linux. The log shows two harmless warnings: `libayatana-appindicator is deprecated`, printed by the
+system tray library when it loads, and GTK's `Tried to unmap the parent of a popup`, printed when a
+window is hidden while a tooltip or menu attached to it is open.
+
+`tyst-cli bench` on all 95 clips (owner + FLEURS + synthetic), against the Phase 0 baseline:
+
+| category | WER | baseline | Δ pp |
+|---|---|---|---|
+| all | 9.0 | 10.7 | −1.6 |
+| sv | 4.8 | 6.2 | −1.4 |
+| en | 4.6 | 5.7 | −1.0 |
+| mixed | 6.9 | 9.0 | −2.1 |
+| sv-terms | 6.0 | 7.8 | −1.8 |
+| fleurs-sv | 9.0 | 10.4 | −1.4 |
+
+Decode RTF 0.019 with 4 threads; RSS 1.2 GB after load.
 
 ## 6. Open items
 
