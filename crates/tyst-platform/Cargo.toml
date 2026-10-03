@@ -1,6 +1,6 @@
 [package]
 name = "tyst-platform"
-description = "Tyst platform layer: OS integrations behind small traits (audio capture first; hotkeys, paste, windows in later phases)."
+description = "Tyst platform layer: OS integrations behind small traits (audio capture; clipboard, portals and paste for dictation)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,12 @@ mic = ["dep:cpal"]
 # Linux: PipeWire capture of the microphone and of the default output's monitor (system audio).
 # Needs libpipewire-0.3 headers and clang to build (Arch: pipewire, clang; Debian: libpipewire-0.3-dev).
 pipewire = ["dep:pipewire"]
+# Desktop integration for dictation: clipboard everywhere; on Linux the XDG portals (global
+# shortcuts, keyboard input) and KWin scripting over D-Bus; on macOS app activation and CGEvent paste.
+desktop = [
+    "dep:arboard", "dep:ashpd", "dep:zbus", "dep:futures-util", "dep:tokio", "dep:serde_json",
+    "dep:objc2-app-kit", "dep:objc2-core-graphics",
+]
 # macOS: system audio through a Core Audio process tap (macOS 14.4+).
 macos-tap = ["dep:objc2", "dep:objc2-foundation", "dep:objc2-core-audio", "dep:objc2-core-audio-types", "dep:objc2-core-foundation"]
 
@@ -22,8 +28,16 @@ log.workspace = true
 tyst-core.workspace = true
 thiserror.workspace = true
 
+arboard = { version = "3.6", optional = true, default-features = false }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 pipewire = { version = "0.10", optional = true }
+arboard = { version = "3.6", optional = true, default-features = false, features = ["wayland-data-control"] }
+ashpd = { version = "0.13", optional = true, default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast"] }
+zbus = { version = "5", optional = true, default-features = false, features = ["tokio"] }
+futures-util = { version = "0.3", optional = true, default-features = false }
+tokio = { version = "1", optional = true, features = ["sync", "time", "macros"] }
+serde_json = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", optional = true }
@@ -31,3 +45,5 @@ objc2-foundation = { version = "0.3", optional = true, default-features = false,
 objc2-core-audio = { version = "0.3", optional = true, default-features = false, features = ["std", "AudioHardware", "objc2", "objc2-foundation", "objc2-core-audio-types"] }
 objc2-core-audio-types = { version = "0.3", optional = true, default-features = false, features = ["std", "CoreAudioBaseTypes"] }
 objc2-core-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "CFDictionary"] }
+objc2-app-kit = { version = "0.3", optional = true, default-features = false, features = ["std", "libc", "NSWorkspace", "NSRunningApplication"] }
+objc2-core-graphics = { version = "0.3", optional = true, default-features = false, features = ["std", "CGEvent", "CGEventTypes", "CGRemoteOperation"] }
