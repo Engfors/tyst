@@ -61,6 +61,58 @@ export interface WindowGeometry {
   height: number;
 }
 
+export type DictationPhase =
+  | "idle"
+  | "starting"
+  | "listening"
+  | "finishing"
+  | "preview"
+  | "redecoding"
+  | "pasting"
+  | "pasted"
+  | "message";
+
+export type Trigger = "hybrid" | "toggle" | "hold";
+export type PasteMode = "preview" | "direct";
+
+export interface PillState {
+  phase: DictationPhase;
+  text: string;
+  partial: string;
+  language: LanguageMode;
+  paste_mode: PasteMode;
+  message: string | null;
+  terminal: boolean;
+  platform: string;
+  languages: LanguageMode[];
+  /** The dictation shortcut as the desktop shows it; pressing it in the preview records more. */
+  shortcut: string | null;
+}
+
+export type PillEvent =
+  | ({ type: "state" } & PillState)
+  | { type: "text"; text: string; partial: string }
+  | { type: "level"; rms: number };
+
+export interface DictationSettings {
+  enabled: boolean;
+  trigger: Trigger;
+  paste_mode: PasteMode;
+  restore_clipboard: boolean;
+  terminal_classes: string[];
+  language: LanguageMode;
+  last_lang: Lang;
+  shortcut: string;
+  meeting_shortcut: string;
+  keyboard_token: string | null;
+}
+
+export interface DictationInfo {
+  shortcuts: { bound: [string, string][]; error: string | null; pending: boolean };
+  keyboard_granted: boolean;
+  english_model: boolean;
+}
+
 export interface Config {
   onboarded: boolean;
   transcripts_dir: string | null;
@@ -76,6 +128,7 @@ export interface Config {
     name_prompt_seconds: number;
     window: Record<string, WindowGeometry>;
   };
+  dictation: DictationSettings;
 }
 
 export interface ConfigView {
@@ -138,7 +191,23 @@ export const api = {
   onboardingFinish: () => invoke<void>("onboarding_finish"),
   showSettings: (tab: string | null) => invoke<void>("show_settings", { tab }),
   installWindowRule: () => invoke<void>("install_window_rule"),
+  dictationState: () => invoke<PillState | null>("dictation_state"),
+  dictationToggle: () => invoke<void>("dictation_toggle"),
+  dictationStop: () => invoke<void>("dictation_stop"),
+  dictationCancel: () => invoke<void>("dictation_cancel"),
+  dictationPaste: (text: string | null) => invoke<void>("dictation_paste", { text }),
+  dictationEdit: (text: string) => invoke<void>("dictation_edit", { text }),
+  dictationCopy: (text: string) => invoke<void>("dictation_copy", { text }),
+  dictationDiscard: () => invoke<void>("dictation_discard"),
+  dictationCycleLanguage: () => invoke<void>("dictation_cycle_language"),
+  dictationInfo: () => invoke<DictationInfo>("dictation_info"),
+  dictationSetupShortcuts: () => invoke<void>("dictation_setup_shortcuts"),
+  dictationSetupKeyboard: () => invoke<void>("dictation_setup_keyboard"),
 };
+
+export function onDictation(cb: (e: PillEvent) => void): Promise<UnlistenFn> {
+  return listen<PillEvent>("tyst://dictation", (e) => cb(e.payload));
+}
 
 export function onMeeting(cb: (e: MeetingEvent) => void): Promise<UnlistenFn> {
   return listen<MeetingEvent>("tyst://meeting", (e) => cb(e.payload));

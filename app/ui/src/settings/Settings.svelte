@@ -1,12 +1,14 @@
 <script lang="ts">
-  // Settings (SPEC 8.6): General, Meetings, Models, Vocabulary, About. Changes save at once.
-  import { onMount } from "svelte";
-  import { api, errorText, type ConfigView } from "../lib/api";
+  // Settings (SPEC 8.6): General, Dictation, Meetings, Models, Vocabulary, About. Changes save
+  // at once.
+  import { onDestroy, onMount } from "svelte";
+  import { api, errorText, type ConfigView, type DictationInfo } from "../lib/api";
   import Models from "../lib/Models.svelte";
   import Vocabulary from "../lib/Vocabulary.svelte";
 
   const tabs = [
     ["general", "General"],
+    ["dictation", "Dictation"],
     ["meetings", "Meetings"],
     ["models", "Models"],
     ["vocabulary", "Vocabulary"],
@@ -17,6 +19,41 @@
   let tab = $state<Tab>("general");
   let view = $state<ConfigView | null>(null);
   let status = $state<string | null>(null);
+  let info = $state<DictationInfo | null>(null);
+  let terminals = $state("");
+  let infoTimer: ReturnType<typeof setInterval> | undefined;
+
+  const shortcutNames: Record<string, string> = { dictate: "Dictate", "toggle-meeting": "Start/stop meeting" };
+
+  async function refreshInfo() {
+    info = await api.dictationInfo().catch(() => null);
+  }
+
+  function saveTerminals() {
+    if (!view) return;
+    view.config.dictation.terminal_classes = terminals
+      .split(/[\n,]/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    save();
+  }
+
+  async function allowPaste() {
+    status = "Waiting for the desktop's permission dialog…";
+    try {
+      await api.dictationSetupKeyboard();
+      status = "Paste access granted.";
+    } catch (e) {
+      status = errorText(e);
+    }
+    refreshInfo();
+  }
+
+  async function rebind() {
+    await api.dictationSetupShortcuts();
+    status = "Confirm the shortcuts in the desktop's dialog if it asks.";
+    setTimeout(refreshInfo, 1500);
+  }
 
   function fromHash() {
     const h = location.hash.slice(1);
@@ -54,7 +91,13 @@
   onMount(async () => {
     fromHash();
     view = await api.configGet();
+    terminals = view.config.dictation.terminal_classes.join("\n");
+    refreshInfo();
+    // The desktop confirms shortcuts asynchronously; keep the status current while open.
+    infoTimer = setInterval(refreshInfo, 3000);
   });
+
+  onDestroy(() => clearInterval(infoTimer));
 </script>
 
 <svelte:window onhashchange={fromHash} />
@@ -100,6 +143,77 @@
           <input type="number" min="1" max="16" bind:value={c.threads} onchange={save} />
           <span class="muted small">More threads: faster text, more CPU. Applies after the models reload.</span>
         </div>
+      {:else if tab === "dictation"}
+        {@const d = c.dictation}
+        <h2>Dictation</h2>
+        <label class="check"><input type="checkbox" bind:checked={d.enabled} onchange={save} /> Dictate with a shortcut</label>
+        <div class="field">
+          <span class="name">Shortcuts</span>
+          {#if view.platform === "macos"}
+            <div class="row">
+              <label>Dictate <input type="text" class="mono" bind:value={d.shortcut} onchange={save} /></label>
+              <label>Meeting <input type="text" class="mono" bind:value={d.meeting_shortcut} onchange={save} /></label>
+            </div>
+            <span class="muted small">Key names by position: <span class="mono">BracketLeft</span> is Å on a Swedish keyboard, <span class="mono">Super</span> is Cmd.</span>
+          {:else}
+            {#if info?.shortcuts.bound.length}
+              <ul class="bound">
+                {#each info.shortcuts.bound as [id, trigger]}
+                  <li>{shortcutNames[id] ?? id}: <b>{trigger || "not assigned"}</b></li>
+                {/each}
+              </ul>
+            {:else if info?.shortcuts.pending}
+              <span class="muted">Waiting for the desktop…</span>
+            {/if}
+            <div class="row">
+              <button onclick={rebind}>Set up again</button>
+              <span class="muted small">Change the keys in System Settings › Keyboard › Shortcuts › Tyst.</span>
+            </div>
+          {/if}
+          {#if info?.shortcuts.error}<span class="warn small">{info.shortcuts.error}</span>{/if}
+        </div>
+        <div class="field">
+          <span class="name">Shortcut</span>
+          <select bind:value={d.trigger} onchange={save}>
+            <option value="hybrid">Tap to start and stop, hold to talk</option>
+            <option value="toggle">Tap to start and stop</option>
+            <option value="hold">Hold to talk</option>
+          </select>
+        </div>
+        <div class="field">
+          <span class="name">When you stop</span>
+          <select bind:value={d.paste_mode} onchange={save}>
+            <option value="preview">Show the text first (Enter pastes)</option>
+            <option value="direct">Paste right away</option>
+          </select>
+        </div>
+        <label class="check"><input type="checkbox" bind:checked={d.restore_clipboard} onchange={save} /> Put back what was on the clipboard after pasting</label>
+        <div class="field">
+          <span class="name">Language</span>
+          <select bind:value={d.language} onchange={save}>
+            <option value="auto">Auto</option>
+            <option value="sv">Svenska</option>
+            <option value="en" disabled={!info?.english_model}>English{info?.english_model ? "" : " (download the English model first)"}</option>
+          </select>
+          <span class="muted small">Tab in the pill switches language while dictating.</span>
+        </div>
+        {#if view.platform === "linux"}
+          <div class="field">
+            <span class="name">Paste access</span>
+            <div class="row">
+              <span class={info?.keyboard_granted ? "ok" : "muted"}>{info?.keyboard_granted ? "Allowed" : "Not allowed yet"}</span>
+              <button onclick={allowPaste}>{info?.keyboard_granted ? "Ask again" : "Allow…"}</button>
+            </div>
+            <span class="muted small">Tyst types Ctrl+V for you through the desktop's remote input permission (asked once).</span>
+          </div>
+          <div class="field">
+            <span class="name">Terminals</span>
+            <textarea class="mono" rows="4" bind:value={terminals} onchange={saveTerminals}></textarea>
+            <span class="muted small">Window classes that paste with Ctrl+Shift+V, one per line.</span>
+          </div>
+        {:else if view.platform === "macos"}
+          <p class="muted small">Pasting needs the Accessibility permission: System Settings › Privacy &amp; Security › Accessibility.</p>
+        {/if}
       {:else if tab === "meetings"}
         <h2>Meetings</h2>
         <label class="check">
@@ -122,7 +236,7 @@
             <span class="name">KDE window rule</span>
             <div class="row">
               <button onclick={() => api.installWindowRule().then(() => (status = "Window rule installed.")).catch((e) => (status = errorText(e)))}>Reinstall</button>
-              <span class="muted small">Keeps the meeting window on top without taking focus (System Settings › Window Rules).</span>
+              <span class="muted small">Keeps the meeting window and the dictation pill on top without taking focus (System Settings › Window Rules).</span>
             </div>
           </div>
         {/if}
@@ -238,7 +352,24 @@
   .credits li {
     margin-bottom: 4px;
   }
-  .status {
+  .status,
+  .warn {
     color: var(--warn);
+  }
+  .ok {
+    color: var(--ok);
+  }
+  .bound {
+    margin: 0;
+    padding-left: 18px;
+  }
+  textarea {
+    font: inherit;
+    color: inherit;
+    background: var(--field);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 5px 8px;
+    max-width: 360px;
   }
 </style>

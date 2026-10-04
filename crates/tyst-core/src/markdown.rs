@@ -36,6 +36,7 @@ pub fn render(session: &Session) -> String {
         match block {
             Block::Turn(channel, text) => out.push_str(&format!("\n**{}:** {}\n", info.labels.get(channel), text)),
             Block::Marker(MarkerKind::Paused) => out.push_str("\n*Paused*\n"),
+            Block::Marker(MarkerKind::Dictating) => out.push_str("\n*(dictating…)*\n"),
         }
     }
     out
@@ -277,6 +278,14 @@ models: [pianissimo-sv-int8@63730c6]\n\
 \n**Me:** Sure, no problem.\n\
 \n*Paused*\n"
         );
+    }
+
+    #[test]
+    fn dictation_marker_ends_the_turn() {
+        let mut s = session(None);
+        s.markers = vec![Marker { at: Duration::from_secs(10), kind: MarkerKind::Dictating }];
+        let md = render(&s);
+        assert!(md.contains("\n**Others:** Låter bra.\n\n*(dictating…)*\n\n**Others:** Vi har frågor."), "{md}");
     }
 
     #[test]

@@ -1,4 +1,5 @@
-//! Windows: the floating meeting window (SPEC 8.3), settings (8.6) and onboarding (8.5).
+//! Windows: the floating meeting window (SPEC 8.3), the dictation pill (8.4), settings (8.6)
+//! and onboarding (8.5).
 //!
 //! The meeting window must never take keyboard focus from the meeting app (SPEC 8.1). It is
 //! created unfocused and non-focusable, always on top, without decorations or a taskbar entry;
@@ -14,10 +15,17 @@ use crate::config::WindowGeometry;
 use crate::state::AppState;
 
 pub const MEETING: &str = "meeting";
+pub const PILL: &str = "pill";
 pub const SETTINGS: &str = "settings";
 pub const ONBOARDING: &str = "onboarding";
-/// Window title; the KWin rule matches it.
+/// Window titles; the KWin rules (and the pill placement script) match them.
 pub const MEETING_TITLE: &str = "Tyst Meeting";
+pub const PILL_TITLE: &str = "Tyst Dictation";
+/// The pill window: wide enough for two lines of live text, tall enough for four lines of
+/// preview; the visible pill sits at its bottom and the rest is transparent.
+pub const PILL_SIZE: (f64, f64) = (560.0, 168.0);
+/// Gap between the pill window and the bottom of the work area (above the Dock or panel).
+pub const PILL_BOTTOM: f64 = 48.0;
 
 /// Whether the meeting window was last shown or hidden. Tracked here because on Linux
 /// `show()`/`hide()` are queued to the GTK loop, so `is_visible()` still reports the old state
@@ -135,6 +143,87 @@ pub fn set_compact(app: &AppHandle, compact: bool) {
             .and_then(|s| w.scale_factor().ok().map(|f| s.to_logical::<f64>(f).width))
             .unwrap_or(420.0);
         let _ = w.set_size(LogicalSize::new(width, if compact { 44.0 } else { 260.0 }));
+    }
+}
+
+fn pill_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(w) = app.get_webview_window(PILL) {
+        return Ok(w);
+    }
+    let w = WebviewWindowBuilder::new(app, PILL, WebviewUrl::App("pill.html".into()))
+        .title(PILL_TITLE)
+        .inner_size(PILL_SIZE.0, PILL_SIZE.1)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .visible_on_all_workspaces(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .focused(false)
+        .visible(false)
+        .build()?;
+    let handle = app.clone();
+    w.on_window_event(move |e| {
+        if let WindowEvent::CloseRequested { api, .. } = e {
+            api.prevent_close();
+            crate::dictation::send(&handle, crate::dictation::Cmd::Discard);
+        }
+    });
+    Ok(w)
+}
+
+/// Creates the pill hidden, so the first dictation does not wait for the webview to load.
+pub fn prepare_pill(app: &AppHandle) {
+    if let Err(e) = pill_window(app) {
+        log::error!("pill window: {e}");
+    }
+}
+
+/// Shows the pill. With `focus` it takes the keyboard (Esc, Tab, Enter, editing) until it hides;
+/// the window the user was in gets it back when the pill hides or pastes. Placement at the
+/// bottom centre of the active screen is done by the caller on KDE ([`crate::desktop`]).
+pub fn show_pill(app: &AppHandle, focus: bool) -> Option<WebviewWindow> {
+    let w = match pill_window(app) {
+        Ok(w) => w,
+        Err(e) => {
+            log::error!("pill window: {e}");
+            return None;
+        }
+    };
+    let _ = w.set_focusable(focus);
+    if crate::desktop::places_windows() {
+        place_pill(&w);
+    }
+    let _ = w.show();
+    if focus {
+        let _ = w.set_focus();
+    }
+    Some(w)
+}
+
+/// Bottom centre of the display under the mouse pointer (or the primary one), for platforms
+/// where the app can position its own windows.
+fn place_pill(w: &WebviewWindow) {
+    let monitor = w
+        .cursor_position()
+        .ok()
+        .and_then(|p| w.monitor_from_point(p.x, p.y).ok().flatten())
+        .or_else(|| w.primary_monitor().ok().flatten());
+    let Some(m) = monitor else { return };
+    let scale = m.scale_factor();
+    let area = m.work_area();
+    let pos = area.position.to_logical::<f64>(scale);
+    let size = area.size.to_logical::<f64>(scale);
+    let x = pos.x + (size.width - PILL_SIZE.0) / 2.0;
+    let y = pos.y + size.height - PILL_SIZE.1 - PILL_BOTTOM;
+    let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+}
+
+pub fn hide_pill(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(PILL) {
+        let _ = w.hide();
+        let _ = w.set_focusable(false);
     }
 }
 

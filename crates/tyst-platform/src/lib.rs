@@ -1,15 +1,24 @@
 //! Platform layer (SPEC 4.2): OS integrations behind small traits, so the core stays pure.
 //!
 //! Audio capture: the microphone through cpal (feature `mic`, every platform) and, on Linux,
-//! microphone and system audio through PipeWire (feature `pipewire`). Hotkeys, paste and window
-//! behavior arrive with later phases.
+//! microphone and system audio through PipeWire (feature `pipewire`). Dictation's desktop
+//! integration (feature `desktop`): the clipboard, and on Linux the XDG portals and KWin
+//! scripting, on macOS app activation and the paste keystroke.
 
+#[cfg(feature = "desktop")]
+pub mod clipboard;
+#[cfg(all(target_os = "linux", feature = "desktop"))]
+pub mod kwin;
+#[cfg(all(target_os = "macos", feature = "desktop"))]
+pub mod macos_input;
 #[cfg(all(target_os = "macos", feature = "macos-tap"))]
 pub mod macos_tap;
 #[cfg(feature = "mic")]
 pub mod mic;
 #[cfg(all(target_os = "linux", feature = "pipewire"))]
 pub mod pipewire;
+#[cfg(all(target_os = "linux", feature = "desktop"))]
+pub mod portal;
 
 use std::sync::mpsc::Sender;
 use std::time::Instant;
@@ -32,6 +41,19 @@ pub enum CaptureError {
     NoDevice,
     #[error("audio device: {0}")]
     Device(String),
+}
+
+/// Desktop integration failures (feature `desktop`).
+#[derive(Debug, thiserror::Error)]
+pub enum DesktopError {
+    #[error("clipboard: {0}")]
+    Clipboard(String),
+    #[error("desktop portal: {0}")]
+    Portal(String),
+    #[error("KWin: {0}")]
+    KWin(String),
+    #[error("keyboard input: {0}")]
+    Input(String),
 }
 
 /// One capture channel (SPEC 4.4).

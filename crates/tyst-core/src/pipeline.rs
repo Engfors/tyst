@@ -184,6 +184,21 @@ impl<D: SpeechDetector> ChannelPipeline<D> {
         self.router.as_mut()
     }
 
+    /// Turns partial decodes on or off, e.g. off once dictation stops so the audio still queued
+    /// goes straight to the final decode.
+    pub fn set_partials(&mut self, on: bool) {
+        self.cfg.partials = on;
+    }
+
+    /// Decodes `samples` (16 kHz) as one segment with the current engine and vocabulary,
+    /// outside the segmenter: for audio the user bounded by hand when VAD found no speech in it.
+    pub fn decode_all(&mut self, samples: &[f32]) -> Result<AsrResult> {
+        let role = self.router.engine();
+        let (mut result, _, _) = self.decode(role, samples, 0)?;
+        result.text = self.vocabulary.apply(&result.text);
+        Ok(result)
+    }
+
     /// Samples consumed so far.
     pub fn position(&self) -> u64 {
         self.segmenter.position()

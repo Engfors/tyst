@@ -1,12 +1,15 @@
-//! Tyst desktop app (SPEC 4, Phase 2): tray icon, floating meeting window, onboarding and
-//! settings on top of `tyst-runtime`. Never logs transcript text or audio.
+//! Tyst desktop app (SPEC 4, Phases 2-3): tray icon, floating meeting window, dictation pill,
+//! onboarding and settings on top of `tyst-runtime`. Never logs transcript text or audio.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
 mod config;
+mod desktop;
+mod dictation;
 #[cfg(target_os = "linux")]
 mod kwin;
+mod shortcuts;
 mod sources;
 mod state;
 mod tray;
@@ -32,7 +35,10 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let config = Config::load();
 
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    let app = builder
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // A second launch passes its command line to the running app.
             if !handle_args(app, &args) {
@@ -47,6 +53,8 @@ fn main() {
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .manage(AppState::new(config))
         .manage(commands::FetchState::default())
+        .manage(desktop::Desktop::default())
+        .manage(shortcuts::Shortcuts::default())
         .invoke_handler(tauri::generate_handler![
             commands::app_state,
             commands::meeting_start,
@@ -76,18 +84,33 @@ fn main() {
             commands::onboarding_finish,
             commands::show_settings,
             commands::install_window_rule,
+            commands::dictation_state,
+            commands::dictation_toggle,
+            commands::dictation_stop,
+            commands::dictation_cancel,
+            commands::dictation_paste,
+            commands::dictation_edit,
+            commands::dictation_copy,
+            commands::dictation_discard,
+            commands::dictation_cycle_language,
+            commands::dictation_info,
+            commands::dictation_setup_shortcuts,
+            commands::dictation_setup_keyboard,
         ])
         .setup(|app| {
             // Menu bar app: no Dock icon (SPEC 8.2).
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let handle = app.handle().clone();
+            dictation::init(&handle);
             tray::build(&handle)?;
             #[cfg(target_os = "linux")]
             if let Err(e) = kwin::install_rule() {
                 log::warn!("KWin rule: {e}");
             }
             let cfg = handle.state::<AppState>().config();
+            shortcuts::register(&handle);
+            windows::prepare_pill(&handle);
             if !cfg.onboarded {
                 windows::show_onboarding(&handle);
             } else {
@@ -116,7 +139,8 @@ fn main() {
 
 /// Command-line actions, for desktop shortcuts and scripts: `tyst --toggle-meeting` starts or
 /// stops a meeting (in the running instance if there is one), `--pause` pauses or resumes,
-/// `--show-meeting` and `--settings` open windows. Returns whether an action was found.
+/// `--dictate` starts or stops dictation, `--show-meeting` and `--settings` open windows.
+/// Returns whether an action was found.
 fn handle_args(app: &AppHandle, args: &[String]) -> bool {
     let mut handled = false;
     for a in args.iter().skip(1) {
@@ -130,6 +154,10 @@ fn handle_args(app: &AppHandle, args: &[String]) -> bool {
                 _ => state::start_meeting(app),
             },
             "--pause" => state::toggle_pause(app),
+            "--dictate" => {
+                dictation::send(app, dictation::Cmd::Toggle);
+                Ok(())
+            }
             "--show-meeting" => {
                 windows::show_meeting(app);
                 Ok(())

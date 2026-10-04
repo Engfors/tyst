@@ -1,9 +1,10 @@
 //! Runtime glue shared by `tyst-cli` and the app: loading the models into a warm [`Runtime`],
 //! downloading them ([`fetch`], one of the two network uses SPEC 0 allows), and running a live
-//! two-channel [`meeting`] session.
+//! two-channel [`meeting`] session or a [`dictation`].
 //!
 //! Never log transcript text or audio; timings, sizes, model names and error codes only.
 
+pub mod dictation;
 pub mod engine;
 pub mod fetch;
 pub mod meeting;

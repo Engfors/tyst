@@ -16,8 +16,10 @@ use tyst_core::vocabulary::{Replacement, VocabularyFile, VocabularyRules};
 use tyst_runtime::fetch::{self, DEFAULT_MODELS, Progress};
 
 use crate::config::{self, Config};
+use crate::desktop::Desktop;
+use crate::dictation::{self, Cmd};
 use crate::state::{self, AppState, Snapshot};
-use crate::windows;
+use crate::{shortcuts, windows};
 
 pub const MODELS_EVENT: &str = "tyst://models";
 
@@ -123,12 +125,21 @@ pub fn config_set(app: AppHandle, config: Config) -> CmdResult {
     if config.threads != old.threads || config.models_dir != old.models_dir {
         st.unload_runtime();
     }
-    // Window geometry is owned by the window, not the settings form.
+    // Window geometry, the paste consent token and the last dictation language are owned by
+    // the app, not the settings form.
     let mut config = config;
-    config.meetings.window = old.meetings.window;
+    config.meetings.window = old.meetings.window.clone();
+    config.dictation.keyboard_token = old.dictation.keyboard_token.clone();
+    config.dictation.last_lang = old.dictation.last_lang;
+    let rebind = config.dictation.enabled != old.dictation.enabled
+        || config.dictation.shortcut != old.dictation.shortcut
+        || config.dictation.meeting_shortcut != old.dictation.meeting_shortcut;
     config.save()?;
     *st.config.lock().expect("config lock") = config;
     st.emit_state(&app);
+    if rebind {
+        shortcuts::register(&app);
+    }
     Ok(())
 }
 
@@ -403,6 +414,86 @@ pub fn onboarding_finish(app: AppHandle) -> CmdResult {
 #[tauri::command]
 pub fn show_settings(app: AppHandle, tab: Option<String>) {
     windows::show_settings(&app, tab.as_deref());
+}
+
+#[tauri::command]
+pub fn dictation_state(app: AppHandle) -> Option<dictation::PillState> {
+    dictation::pill_state(&app)
+}
+
+#[tauri::command]
+pub fn dictation_toggle(app: AppHandle) {
+    dictation::send(&app, Cmd::Toggle);
+}
+
+#[tauri::command]
+pub fn dictation_stop(app: AppHandle) {
+    dictation::send(&app, Cmd::Stop);
+}
+
+#[tauri::command]
+pub fn dictation_cancel(app: AppHandle) {
+    dictation::send(&app, Cmd::Cancel);
+}
+
+/// Pastes the (possibly edited) preview text.
+#[tauri::command]
+pub fn dictation_paste(app: AppHandle, text: Option<String>) {
+    dictation::send(&app, Cmd::Paste(text));
+}
+
+/// The user edited the preview text (so the shortcut pastes the edited version).
+#[tauri::command]
+pub fn dictation_edit(app: AppHandle, text: String) {
+    dictation::send(&app, Cmd::Edit(text));
+}
+
+#[tauri::command]
+pub fn dictation_copy(app: AppHandle, text: String) {
+    dictation::send(&app, Cmd::Copy(text));
+}
+
+#[tauri::command]
+pub fn dictation_discard(app: AppHandle) {
+    dictation::send(&app, Cmd::Discard);
+}
+
+#[tauri::command]
+pub fn dictation_cycle_language(app: AppHandle) {
+    dictation::send(&app, Cmd::CycleLanguage);
+}
+
+#[derive(Serialize)]
+pub struct DictationInfo {
+    pub shortcuts: shortcuts::ShortcutStatus,
+    /// Linux: keyboard access for paste was granted before (a restore token is kept).
+    pub keyboard_granted: bool,
+    pub english_model: bool,
+}
+
+#[tauri::command]
+pub fn dictation_info(app: AppHandle) -> DictationInfo {
+    let cfg = app.state::<AppState>().config();
+    DictationInfo {
+        shortcuts: shortcuts::status(&app),
+        keyboard_granted: cfg.dictation.keyboard_token.is_some(),
+        english_model: fetch::installed(&[PARAKEET], &cfg.models_dir()),
+    }
+}
+
+/// Binds the shortcuts again (the desktop may ask to confirm them).
+#[tauri::command]
+pub fn dictation_setup_shortcuts(app: AppHandle) {
+    shortcuts::register(&app);
+}
+
+/// Asks for keyboard access for paste now (Linux: the desktop's consent dialog).
+#[tauri::command]
+pub async fn dictation_setup_keyboard(app: AppHandle) -> CmdResult {
+    let token = app.state::<AppState>().config().dictation.keyboard_token;
+    let token = app.state::<Desktop>().setup_keyboard(token).await?;
+    app.state::<AppState>().update_config(|c| c.dictation.keyboard_token = token);
+    Ok(())
 }
 
 #[tauri::command]

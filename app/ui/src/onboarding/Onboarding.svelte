@@ -1,11 +1,11 @@
 <script lang="ts">
-  // First run (SPEC 8.5): welcome, transcripts folder, models, audio access, preferences, test.
-  // Shortcuts arrive with dictation (Phase 3).
+  // First run (SPEC 8.5): welcome, transcripts folder, models, audio access, dictation
+  // (shortcuts and paste access), preferences, test.
   import { onMount } from "svelte";
-  import { api, errorText, type ConfigView } from "../lib/api";
+  import { api, errorText, type ConfigView, type DictationInfo } from "../lib/api";
   import Models from "../lib/Models.svelte";
 
-  const steps = ["Welcome", "Folder", "Models", "Audio", "Preferences", "Test"] as const;
+  const steps = ["Welcome", "Folder", "Models", "Audio", "Dictation", "Preferences", "Test"] as const;
   let step = $state(0);
   let view = $state<ConfigView | null>(null);
   let modelsReady = $state(false);
@@ -15,6 +15,27 @@
   let mic = $state<Check>({ state: "idle", detail: "" });
   let system = $state<Check>({ state: "idle", detail: "" });
   let test = $state<Check>({ state: "idle", detail: "" });
+  let info = $state<DictationInfo | null>(null);
+  let paste = $state<Check>({ state: "idle", detail: "" });
+
+  async function setupShortcuts() {
+    await api.dictationSetupShortcuts().catch((e) => (error = errorText(e)));
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      info = await api.dictationInfo().catch(() => null);
+      if (info && !info.shortcuts.pending) break;
+    }
+  }
+
+  async function allowPaste() {
+    paste = { state: "running", detail: "" };
+    try {
+      await api.dictationSetupKeyboard();
+      paste = { state: "ok", detail: "Allowed." };
+    } catch (e) {
+      paste = { state: "failed", detail: errorText(e) };
+    }
+  }
 
   const canNext = $derived(
     step === 1 ? !!view?.config.transcripts_dir : step === 2 ? modelsReady : true,
@@ -107,13 +128,33 @@
         <p class="muted small">On Linux, PipeWire normally needs no permission. On KDE, Tyst adds a window rule so the meeting window stays on top without taking focus.</p>
       {/if}
     {:else if step === 4 && view}
+      <h1>Dictation</h1>
+      <p>Dictate into any app: press <b>{view.platform === "macos" ? "Cmd+Å" : "Ctrl+Å"}</b>, speak, press it again (or hold it while you talk). The text shows in a small pill; Enter pastes it where you were typing.</p>
+      {#if view.platform === "linux"}
+        <div class="check">
+          <button onclick={setupShortcuts}>Set up shortcuts</button>
+          <span class="result">
+            {#if info?.shortcuts.error}{info.shortcuts.error}
+            {:else if info?.shortcuts.bound.length}{info.shortcuts.bound.map(([id, t]) => `${id === "dictate" ? "Dictate" : "Meeting"}: ${t || "not assigned"}`).join(" · ")}
+            {:else if info?.shortcuts.pending}Confirm the keys in the dialog…{/if}
+          </span>
+        </div>
+        <div class="check">
+          <button onclick={allowPaste} disabled={paste.state === "running"}>Allow paste</button>
+          <span class={`result ${paste.state}`}>{paste.state === "running" ? "Allow remote input in the dialog…" : paste.detail}</span>
+        </div>
+        <p class="muted small">Your desktop asks once for each: the shortcut keys, and permission for Tyst to press Ctrl+V for you. Change the keys later in System Settings › Keyboard › Shortcuts.</p>
+      {:else if view.platform === "macos"}
+        <p class="muted small">Pasting needs the Accessibility permission: System Settings › Privacy &amp; Security › Accessibility. macOS asks the first time Tyst pastes.</p>
+      {/if}
+    {:else if step === 5 && view}
       <h1>Preferences</h1>
       <label class="opt"><input type="checkbox" bind:checked={view.config.launch_at_login} onchange={save} /> Launch Tyst at login</label>
       <label class="opt"><input type="checkbox" bind:checked={view.config.meetings.system_audio} onchange={save} disabled={!view.system_audio_supported} /> Transcribe system audio as “Others”</label>
       <div class="tip">
         <b>Use headphones in meetings.</b> On speakers, the microphone also picks up the other participants, and their words appear twice.
       </div>
-    {:else if step === 5}
+    {:else if step === 6}
       <h1>Try it</h1>
       <p>Click and say a sentence in Swedish or English.</p>
       <div class="check">
@@ -121,7 +162,7 @@
         <span class={`result ${test.state}`}>{test.state === "running" ? "Listening for 5 seconds…" : ""}</span>
       </div>
       {#if test.detail && test.state !== "running"}<blockquote>{test.detail}</blockquote>{/if}
-      <p class="muted">Start a meeting from the Tyst icon in the {view?.platform === "macos" ? "menu bar" : "system tray"}.</p>
+      <p class="muted">Start a meeting from the Tyst icon in the {view?.platform === "macos" ? "menu bar" : "system tray"}, or dictate with {view?.platform === "macos" ? "Cmd+Å" : "Ctrl+Å"} in any text field.</p>
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
   </section>

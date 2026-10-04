@@ -25,6 +25,7 @@ pub struct Config {
     /// ONNX Runtime threads.
     pub threads: usize,
     pub meetings: MeetingSettings,
+    pub dictation: DictationSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -40,6 +41,85 @@ pub struct MeetingSettings {
     pub name_prompt_seconds: u32,
     /// Meeting window geometry per display (keyed by display name), in logical pixels.
     pub window: BTreeMap<String, WindowGeometry>,
+}
+
+/// How the dictation shortcut behaves (SPEC 8.4, 15 q5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Trigger {
+    /// Tap to start and stop; hold longer than 400 ms for push-to-talk.
+    #[default]
+    Hybrid,
+    /// Tap to start, tap again to stop.
+    Toggle,
+    /// Push-to-talk only: dictates while the shortcut is held.
+    Hold,
+}
+
+/// What happens when dictation stops (SPEC 8.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PasteMode {
+    /// Show the text in the pill: Enter pastes, Ctrl+C copies, Esc discards.
+    #[default]
+    Preview,
+    /// Paste at once.
+    Direct,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DictationSettings {
+    /// Listen for the dictation shortcut.
+    pub enabled: bool,
+    pub trigger: Trigger,
+    pub paste_mode: PasteMode,
+    /// Put back what was on the clipboard after pasting.
+    pub restore_clipboard: bool,
+    /// Window classes (app ids) that get Ctrl+Shift+V instead of Ctrl+V (Linux).
+    pub terminal_classes: Vec<String>,
+    /// Dictation language: auto, sv or en.
+    pub language: String,
+    /// Language of the last dictation; short utterances keep it.
+    pub last_lang: tyst_core::transcript::Lang,
+    /// macOS shortcuts (Tauri accelerators, matched by key position: `BracketLeft` is Å on a
+    /// Swedish keyboard). On Linux the desktop binds the shortcuts (System Settings).
+    pub shortcut: String,
+    pub meeting_shortcut: String,
+    /// Restore token of the keyboard portal (Linux), so paste does not ask again.
+    pub keyboard_token: Option<String>,
+}
+
+pub const DEFAULT_TERMINALS: &[&str] =
+    &["com.mitchellh.ghostty", "org.kde.konsole", "kitty", "alacritty", "foot", "wezterm"];
+
+impl Default for DictationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            trigger: Trigger::Hybrid,
+            paste_mode: PasteMode::Preview,
+            restore_clipboard: true,
+            terminal_classes: DEFAULT_TERMINALS.iter().map(|s| s.to_string()).collect(),
+            language: "auto".into(),
+            last_lang: tyst_core::transcript::Lang::Sv,
+            shortcut: "Super+BracketLeft".into(),
+            meeting_shortcut: "Super+Shift+BracketLeft".into(),
+            keyboard_token: None,
+        }
+    }
+}
+
+/// Whether a window class belongs to a terminal in `list`: equal ignoring case, or the last part
+/// of a reverse-DNS app id (`wezterm` matches `org.wezfurlong.wezterm`).
+pub fn is_terminal(class: &str, list: &[String]) -> bool {
+    let class = class.trim().to_ascii_lowercase();
+    if class.is_empty() {
+        return false;
+    }
+    list.iter().map(|t| t.trim().to_ascii_lowercase()).filter(|t| !t.is_empty()).any(|t| {
+        class == t || class.rsplit('.').next() == Some(t.as_str()) || t.rsplit('.').next() == Some(class.as_str())
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -61,6 +141,7 @@ impl Default for Config {
             launch_at_login: true,
             threads: 4,
             meetings: MeetingSettings::default(),
+            dictation: DictationSettings::default(),
         }
     }
 }
@@ -169,6 +250,33 @@ mod tests {
         assert_eq!(c.meetings.name_prompt_seconds, 30);
         assert!(c.launch_at_login);
         assert_eq!(c.labels.me, "Me");
+    }
+
+    #[test]
+    fn old_files_get_dictation_defaults() {
+        let c: Config = toml::from_str("onboarded = true\n").unwrap();
+        assert!(c.dictation.enabled);
+        assert_eq!(c.dictation.trigger, Trigger::Hybrid);
+        assert_eq!(c.dictation.paste_mode, PasteMode::Preview);
+        assert!(c.dictation.restore_clipboard);
+        let c: Config = toml::from_str("[dictation]\ntrigger = \"hold\"\npaste_mode = \"direct\"\n").unwrap();
+        assert_eq!(c.dictation.trigger, Trigger::Hold);
+        assert_eq!(c.dictation.paste_mode, PasteMode::Direct);
+    }
+
+    #[test]
+    fn spots_terminals() {
+        let list: Vec<String> = DEFAULT_TERMINALS.iter().map(|s| s.to_string()).collect();
+        for class in
+            ["org.kde.konsole", "com.mitchellh.ghostty", "kitty", "Alacritty", "foot", "org.wezfurlong.wezterm"]
+        {
+            assert!(is_terminal(class, &list), "{class}");
+        }
+        for class in ["org.kde.kate", "firefox", "Slack", "code", ""] {
+            assert!(!is_terminal(class, &list), "{class}");
+        }
+        // A bare class matches a reverse-DNS entry too (X11 WM_CLASS "konsole").
+        assert!(is_terminal("konsole", &list));
     }
 
     #[test]
