@@ -61,7 +61,11 @@ or ydotool the paste falls back to clipboard-only, as designed.
 
 Steps: Arch test steps shared with the owner (five apps, Swedish characters, latency, clipboard
 restore, hold vs tap, Esc/Tab, direct mode, dictation during a meeting, CLI latency on the owner's clips).
-Results: pending.
+Owner run on Arch / KDE Plasma (Wayland), 2026-10-04: the five apps, Swedish characters, clipboard
+restore, Esc/Tab, direct mode and dictation during a meeting pass. Hold vs tap failed on one point:
+the shortcut in the preview pasted instead of recording more; it now records more (re-test pending).
+In the app, listening began 38–48 ms after the shortcut and the text was ready 1–101 ms after stop.
+`tyst-cli dictate` on the owner's 10 Swedish clips: stop → text p50 0.13 s, p95/max 0.25 s.
 
 ## 6. Decisions
 
