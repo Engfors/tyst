@@ -45,6 +45,13 @@ ELF sections linuxdeploy's `strip` does not know. The AppImage needs glibc 2.39 
 matching `libstdc++` (Arch is fine; Ubuntu 22.04 and Debian 12 are too old) and `fusermount3`
 (`fuse3`). Models are not bundled.
 
+### Troubleshooting (Linux)
+
+- **Blank, flickering or crashing windows on NVIDIA.** Tyst already turns off WebKitGTK's DMA-BUF
+  renderer, which fixes the usual "Error 71 (Protocol error)" crash on Wayland. If the windows still
+  render blank or flicker, start it with explicit sync disabled:
+  `__NV_DISABLE_EXPLICIT_SYNC=1 ~/.local/share/AppImage/Tyst.AppImage`.
+
 Models live outside the repo: `~/Library/Application Support/Tyst/models` on macOS,
 `~/.local/share/tyst/models` on Linux, or `$TYST_MODELS`. After downloading, `models fetch` also writes
 `encoder-model.banded.int8.onnx`: the same Pianissimo encoder with its local attention computed without
