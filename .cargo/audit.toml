@@ -1,0 +1,17 @@
+# cargo audit (CI job "cargo audit", issue #14 SEC-007).
+
+[advisories]
+ignore = [
+  # glib 0.18: unsound VariantStrIter. Comes in through Tauri's GTK 3 stack (tauri -> gtk ->
+  # glib 0.18), which has no glib 0.20 release; Tyst never calls VariantStrIter. Drop this
+  # when Tauri moves off gtk-rs 0.18.
+  "RUSTSEC-2024-0429",
+  # proc-macro-error: unmaintained, a build-time proc macro only (glib-macros via Tauri's
+  # GTK 3 stack); nothing of it runs in Tyst. Same exit as above.
+  "RUSTSEC-2024-0370",
+]
+
+[output]
+# Vulnerabilities always fail; so does unsound or yanked code beyond the ignores above.
+deny = ["unsound", "yanked"]
+quiet = false

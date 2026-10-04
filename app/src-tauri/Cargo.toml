@@ -29,10 +29,14 @@ tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tokio = { version = "1", features = ["sync", "time"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "5.2", default-features = false, features = ["rt-tokio-crypto-rust"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # Linux writes its login entry itself (`autostart.rs`).
 tauri-plugin-autostart = "2"
 tauri-plugin-global-shortcut = "2"
+security-framework = "3"
 
 [features]
 default = ["mic", "pipewire", "macos-tap"]

@@ -6,16 +6,24 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-[dependencies]
-chrono.workspace = true
-log.workspace = true
-thiserror.workspace = true
-tyst-core.workspace = true
-tyst-platform.workspace = true
-ureq.workspace = true
-
 [features]
+default = ["aec"]
+# Echo cancellation on the Me channel with system audio as the reference (WebRTC AEC3, SPEC 6.4).
+# Builds the C++ library from source: needs meson, ninja and a C++ compiler.
+aec = ["dep:webrtc-audio-processing", "dep:webrtc-audio-processing-config"]
 # Capture backends for `sources` (see tyst-platform).
 mic = ["tyst-platform/mic"]
 pipewire = ["tyst-platform/pipewire"]
 macos-tap = ["tyst-platform/macos-tap"]
+
+[dependencies]
+chrono.workspace = true
+log.workspace = true
+semver = "1"
+serde.workspace = true
+thiserror.workspace = true
+tyst-core.workspace = true
+tyst-platform.workspace = true
+ureq = { workspace = true, features = ["json"] }
+webrtc-audio-processing = { version = "2.1", optional = true, features = ["bundled"] }
+webrtc-audio-processing-config = { version = "2.1", optional = true }

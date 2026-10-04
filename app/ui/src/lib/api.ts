@@ -70,7 +70,8 @@ export type DictationPhase =
   | "redecoding"
   | "pasting"
   | "pasted"
-  | "message";
+  | "message"
+  | "prompt";
 
 export type Trigger = "hybrid" | "toggle" | "hold";
 export type PasteMode = "preview" | "direct";
@@ -87,6 +88,7 @@ export interface PillState {
   languages: LanguageMode[];
   /** The dictation shortcut as the desktop shows it; pressing it in the preview records more. */
   shortcut: string | null;
+  meeting_shortcut: string | null;
 }
 
 export type PillEvent =
@@ -104,7 +106,7 @@ export interface DictationSettings {
   last_lang: Lang;
   shortcut: string;
   meeting_shortcut: string;
-  keyboard_token: string | null;
+  keyboard_access: boolean;
 }
 
 export interface DictationInfo {
@@ -121,14 +123,38 @@ export interface Config {
   labels: Labels;
   launch_at_login: boolean;
   threads: number;
+  models_idle_minutes: number;
   meetings: {
     system_audio: boolean;
+    echo_cancellation: boolean;
     show_window_on_start: boolean;
     compact: boolean;
     name_prompt_seconds: number;
+    detect: boolean;
+    detect_apps: string[];
     window: Record<string, WindowGeometry>;
   };
   dictation: DictationSettings;
+  updates: { check: boolean; github_token: boolean };
+}
+
+export interface Release {
+  version: string;
+  tag: string;
+  url: string;
+  notes: string;
+  published_at: string | null;
+}
+
+export interface UpdateView {
+  current: string;
+  enabled: boolean;
+  has_token: boolean;
+  checking: boolean;
+  last_checked: string | null;
+  latest: Release | null;
+  available: boolean;
+  error: string | null;
 }
 
 export interface ConfigView {
@@ -137,6 +163,7 @@ export interface ConfigView {
   default_transcripts_dir: string;
   default_models_dir: string;
   system_audio_supported: boolean;
+  detect_supported: boolean;
   version: string;
   platform: string;
 }
@@ -174,6 +201,7 @@ export const api = {
   openPath: (path: string) => invoke<void>("open_path", { path }),
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),
   openTranscripts: () => invoke<void>("open_transcripts_folder"),
+  openNotices: () => invoke<void>("open_notices"),
   configGet: () => invoke<ConfigView>("config_get"),
   configSet: (config: Config) => invoke<void>("config_set", { config }),
   pickFolder: (current: string | null) => invoke<string | null>("pick_folder", { current }),
@@ -203,7 +231,16 @@ export const api = {
   dictationInfo: () => invoke<DictationInfo>("dictation_info"),
   dictationSetupShortcuts: () => invoke<void>("dictation_setup_shortcuts"),
   dictationSetupKeyboard: () => invoke<void>("dictation_setup_keyboard"),
+  meetingPromptAnswer: (start: boolean) => invoke<void>("meeting_prompt_answer", { start }),
+  updatesState: () => invoke<UpdateView>("updates_state"),
+  updatesCheck: () => invoke<UpdateView>("updates_check"),
+  updatesSetToken: (token: string | null) => invoke<UpdateView>("updates_set_token", { token }),
+  updatesOpenRelease: () => invoke<void>("updates_open_release"),
 };
+
+export function onUpdates(cb: (v: UpdateView) => void): Promise<UnlistenFn> {
+  return listen<UpdateView>("tyst://updates", (e) => cb(e.payload));
+}
 
 export function onDictation(cb: (e: PillEvent) => void): Promise<UnlistenFn> {
   return listen<PillEvent>("tyst://dictation", (e) => cb(e.payload));

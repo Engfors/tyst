@@ -254,6 +254,16 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
+/// An HTTPS client with the platform's certificates that gives up after `timeout`.
+pub(crate) fn agent_with_timeout(timeout: std::time::Duration) -> ureq::Agent {
+    use ureq::tls::{RootCerts, TlsConfig};
+    ureq::Agent::config_builder()
+        .tls_config(TlsConfig::builder().root_certs(RootCerts::PlatformVerifier).build())
+        .timeout_global(Some(timeout))
+        .build()
+        .into()
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{BufRead, BufReader};

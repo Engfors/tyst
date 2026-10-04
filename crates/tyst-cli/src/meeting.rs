@@ -42,6 +42,9 @@ pub struct MeetingArgs {
     /// Do not print transcript text.
     #[arg(long)]
     pub quiet: bool,
+    /// Leave the microphone as it is: no echo cancellation with system audio as the reference.
+    #[arg(long)]
+    pub no_echo_cancellation: bool,
     #[command(flatten)]
     pub engine: EngineArgs,
 }
@@ -74,6 +77,7 @@ pub fn run(args: MeetingArgs) -> Result<()> {
         app: app_name(),
         mode: rt.mode,
         sources,
+        echo_cancellation: !args.no_echo_cancellation,
     };
     let meeting = Meeting::start(&rt, opts, tx)?;
     let stop = Arc::new(AtomicBool::new(false));

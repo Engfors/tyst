@@ -5,6 +5,7 @@
 
 mod bench;
 mod dictate;
+mod echo_cmd;
 mod live;
 mod meeting;
 mod models_cmd;
@@ -39,6 +40,11 @@ enum Command {
     Models(models_cmd::ModelsArgs),
     /// Turn journals of interrupted sessions back into Markdown files.
     Recover(transcribe::RecoverArgs),
+    /// Echo cancellation offline: clean a microphone recording using the system audio played meanwhile.
+    EchoCancel(echo_cmd::EchoArgs),
+    /// Ask GitHub whether a newer release exists (the app's update check). A private repository
+    /// needs a token in $GITHUB_TOKEN.
+    CheckUpdate,
 }
 
 /// Options shared by every command that runs the pipeline.
@@ -69,9 +75,24 @@ fn main() {
         Command::Bench(a) => bench::run(a),
         Command::Models(a) => models_cmd::run(a),
         Command::Recover(a) => transcribe::recover(a),
+        Command::EchoCancel(a) => echo_cmd::run(a),
+        Command::CheckUpdate => check_update(),
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");
         std::process::exit(1);
     }
+}
+
+fn check_update() -> anyhow::Result<()> {
+    use tyst_runtime::update;
+    let current = env!("CARGO_PKG_VERSION");
+    let token = std::env::var("GITHUB_TOKEN").ok();
+    let release = update::latest_release(update::REPO, token.as_deref(), &format!("tyst-cli/{current}"))?;
+    if update::is_newer(&release.version, current) {
+        println!("Tyst {} is available (this is {current}): {}", release.version, release.url);
+    } else {
+        println!("Up to date: {current} (latest release {})", release.version);
+    }
+    Ok(())
 }

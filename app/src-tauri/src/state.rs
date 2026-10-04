@@ -111,6 +111,8 @@ pub struct AppState {
     live: Mutex<Live>,
     /// Numbers starts and name prompts, so a stale thread can tell it is no longer wanted.
     counter: AtomicU64,
+    /// When the models were last needed (SPEC 5.2: unload after N idle minutes).
+    last_used: Mutex<Instant>,
 }
 
 pub fn lang_code(mode: LanguageMode) -> &'static str {
@@ -129,6 +131,7 @@ impl AppState {
             session: Mutex::new(Session::Idle),
             live: Mutex::new(Live::default()),
             counter: AtomicU64::new(0),
+            last_used: Mutex::new(Instant::now()),
         }
     }
 
@@ -197,6 +200,7 @@ impl AppState {
     }
 
     fn ensure_runtime(&self) -> Result<(), String> {
+        *self.last_used.lock().expect("last used lock") = Instant::now();
         let mut rt = self.runtime.lock().expect("runtime lock");
         if rt.is_none() {
             let cfg = self.config();
@@ -245,6 +249,39 @@ impl AppState {
         *self.runtime.lock().expect("runtime lock") = None;
     }
 
+    /// Unloads the models after `models_idle_minutes` without a meeting or dictation (SPEC 5.2,
+    /// 11: next to no memory and CPU while idle). They load again on the next use, which then
+    /// takes a second or two longer.
+    pub fn unload_when_idle(app: &AppHandle) {
+        let app = app.clone();
+        std::thread::Builder::new()
+            .name("tyst-idle".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(Duration::from_secs(30));
+                    let st = app.state::<AppState>();
+                    let busy =
+                        st.phase() != Phase::Idle || crate::dictation::phase(&app) != crate::dictation::Phase::Idle;
+                    let mut last = st.last_used.lock().expect("last used lock");
+                    if busy {
+                        *last = Instant::now();
+                        continue;
+                    }
+                    let minutes = st.config().models_idle_minutes;
+                    if minutes == 0 || last.elapsed() < Duration::from_secs(60 * minutes as u64) {
+                        continue;
+                    }
+                    *last = Instant::now();
+                    drop(last);
+                    let mut rt = st.runtime.lock().expect("runtime lock");
+                    if rt.take().is_some() {
+                        log::info!("models unloaded after {minutes} idle minutes");
+                    }
+                }
+            })
+            .expect("spawning the idle thread");
+    }
+
     /// New vocabulary rules, used from the next meeting on.
     pub fn set_vocabulary(&self, rules: VocabularyRules) {
         if let Some(rt) = self.runtime.lock().expect("runtime lock").as_mut() {
@@ -274,6 +311,8 @@ fn naming_info(stopped: &StoppedMeeting, cfg: &Config) -> Naming {
 /// Starts a meeting: saves a meeting still waiting for its name, loads the models if needed
 /// (off the caller's thread), then starts capture on Me (and Others when enabled).
 pub fn start_meeting(app: &AppHandle) -> Result<(), String> {
+    // A meeting prompt that is still showing has been answered.
+    crate::dictation::send(app, crate::dictation::Cmd::PromptAnswer(false));
     let st = app.state::<AppState>();
     if st.phase() == Phase::Naming {
         save_meeting(app, None)?;
@@ -353,6 +392,7 @@ fn begin(app: &AppHandle, cfg: &Config, dir: PathBuf, generation: u64) -> Result
         app: format!("Tyst {}", env!("CARGO_PKG_VERSION")),
         mode: LanguageMode::parse(&cfg.language).unwrap_or_default(),
         sources: srcs,
+        echo_cancellation: cfg.meetings.echo_cancellation,
     };
     let meeting = {
         let rt = st.runtime.lock().expect("runtime lock");
