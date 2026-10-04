@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings",
+  "description": "Settings: configuration, models, vocabulary and desktop setup.",
+  "windows": [
+    "settings"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "allow-config-get",
+    "allow-config-set",
+    "allow-dictation-info",
+    "allow-dictation-setup-keyboard",
+    "allow-dictation-setup-shortcuts",
+    "allow-install-window-rule",
+    "allow-models-cancel",
+    "allow-models-fetch",
+    "allow-models-status",
+    "allow-models-verify",
+    "allow-open-transcripts-folder",
+    "allow-pick-folder",
+    "allow-vocabulary-export",
+    "allow-vocabulary-get",
+    "allow-vocabulary-import",
+    "allow-vocabulary-set"
+  ]
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-transcripts-folder"
+description = "Enables the open_transcripts_folder command without any pre-configured scope."
+commands.allow = ["open_transcripts_folder"]
+
+[[permission]]
+identifier = "deny-open-transcripts-folder"
+description = "Denies the open_transcripts_folder command without any pre-configured scope."
+commands.deny = ["open_transcripts_folder"]

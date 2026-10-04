@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "meeting",
+  "description": "The floating meeting window: meeting control and opening the saved file.",
+  "windows": [
+    "meeting"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "allow-app-state",
+    "allow-meeting-preview",
+    "allow-meeting-save",
+    "allow-meeting-set-language",
+    "allow-meeting-start",
+    "allow-meeting-stop",
+    "allow-meeting-toggle-pause",
+    "allow-meeting-window-compact",
+    "allow-meeting-window-hide",
+    "allow-open-path",
+    "allow-reveal-path"
+  ]
+}

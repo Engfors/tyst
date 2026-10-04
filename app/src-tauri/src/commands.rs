@@ -74,14 +74,36 @@ pub fn meeting_window_compact(app: AppHandle, compact: bool) {
     windows::set_compact(&app, compact);
 }
 
+/// Opens a saved transcript (only files inside the transcripts folder).
 #[tauri::command]
 pub fn open_path(app: AppHandle, path: String) -> CmdResult {
-    open(&app, std::path::Path::new(&path))
+    let path = transcript_path(&app, &path)?;
+    open(&app, &path)
 }
 
+/// Shows a saved transcript in the file manager (only files inside the transcripts folder).
 #[tauri::command]
 pub fn reveal_path(app: AppHandle, path: String) -> CmdResult {
+    let path = transcript_path(&app, &path)?;
     app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
+}
+
+fn transcript_path(app: &AppHandle, path: &str) -> CmdResult<std::path::PathBuf> {
+    let dir = app.state::<AppState>().config().transcripts_dir.ok_or("No transcripts folder chosen yet.")?;
+    inside(&dir, path)
+}
+
+/// `path` as an existing file or folder inside `dir` (after resolving `..` and links). URLs and
+/// anything else are refused, so a webview cannot use the opener to reach the network or run
+/// other files.
+fn inside(dir: &std::path::Path, path: &str) -> CmdResult<std::path::PathBuf> {
+    let refuse = || format!("Not a file in the transcripts folder: {path}");
+    if path.contains("://") || !std::path::Path::new(path).is_absolute() {
+        return Err(refuse());
+    }
+    let dir = dir.canonicalize().map_err(|e| e.to_string())?;
+    let path = std::path::Path::new(path).canonicalize().map_err(|_| refuse())?;
+    if path.starts_with(&dir) { Ok(path) } else { Err(refuse()) }
 }
 
 #[tauri::command]
@@ -537,6 +559,22 @@ pub fn install_window_rule() -> CmdResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opener_only_reaches_the_transcripts_folder() {
+        let root = std::env::temp_dir().join(format!("tyst-open-{}", std::process::id()));
+        let dir = root.join("Transcripts");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.md"), "x").unwrap();
+        std::fs::write(root.join("secret"), "x").unwrap();
+        assert!(inside(&dir, dir.join("a.md").to_str().unwrap()).is_ok());
+        assert!(inside(&dir, dir.join("../secret").to_str().unwrap()).is_err());
+        assert!(inside(&dir, root.join("secret").to_str().unwrap()).is_err());
+        assert!(inside(&dir, "https://example.com/x").is_err());
+        assert!(inside(&dir, "a.md").is_err());
+        assert!(inside(&dir, dir.join("missing.md").to_str().unwrap()).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn vocabulary_keeps_replacements_over_ipc() {

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-vocabulary-get"
+description = "Enables the vocabulary_get command without any pre-configured scope."
+commands.allow = ["vocabulary_get"]
+
+[[permission]]
+identifier = "deny-vocabulary-get"
+description = "Denies the vocabulary_get command without any pre-configured scope."
+commands.deny = ["vocabulary_get"]

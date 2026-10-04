@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-dictation-edit"
+description = "Enables the dictation_edit command without any pre-configured scope."
+commands.allow = ["dictation_edit"]
+
+[[permission]]
+identifier = "deny-dictation-edit"
+description = "Denies the dictation_edit command without any pre-configured scope."
+commands.deny = ["dictation_edit"]

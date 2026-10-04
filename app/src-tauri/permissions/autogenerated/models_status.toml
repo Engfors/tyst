@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-models-status"
+description = "Enables the models_status command without any pre-configured scope."
+commands.allow = ["models_status"]
+
+[[permission]]
+identifier = "deny-models-status"
+description = "Denies the models_status command without any pre-configured scope."
+commands.deny = ["models_status"]
