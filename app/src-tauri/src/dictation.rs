@@ -76,6 +76,8 @@ pub struct PillState {
     pub platform: &'static str,
     /// Languages Tab cycles through (English only with its model installed).
     pub languages: Vec<&'static str>,
+    /// The dictation shortcut as the desktop shows it ("Ctrl+Å"), for the preview's hint.
+    pub shortcut: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -117,7 +119,8 @@ pub enum Cmd {
 pub enum Action {
     Start,
     Stop,
-    Paste,
+    /// Record more and add it to the preview text.
+    Resume,
     None,
 }
 
@@ -141,7 +144,10 @@ impl Gesture {
                 Action::Start
             }
             Phase::Starting | Phase::Listening if trigger != Trigger::Hold => Action::Stop,
-            Phase::Preview => Action::Paste,
+            Phase::Preview => {
+                self.started = true;
+                Action::Resume
+            }
             _ => Action::None,
         }
     }
@@ -167,6 +173,9 @@ struct Ctl {
     session: Option<Dictation>,
     target: Target,
     result: Option<Dictated>,
+    /// While recording more for a preview: its (possibly edited) text and recording, which the
+    /// new part is added to.
+    earlier: Option<(String, Dictated)>,
     text: String,
     partial: String,
     mode: LanguageMode,
@@ -206,6 +215,7 @@ pub fn init(app: &AppHandle) {
         session: None,
         target: Target::default(),
         result: None,
+        earlier: None,
         text: String::new(),
         partial: String::new(),
         mode: LanguageMode::parse(&cfg.dictation.language).unwrap_or_default(),
@@ -245,7 +255,7 @@ impl Ctl {
             Cmd::Press(at) => match self.gesture.press(self.cfg().trigger, self.phase, at) {
                 Action::Start => self.start(),
                 Action::Stop => self.stop(),
-                Action::Paste => self.paste(None),
+                Action::Resume => self.resume(),
                 Action::None => {}
             },
             Cmd::Release(at) => {
@@ -256,7 +266,7 @@ impl Ctl {
             Cmd::Toggle => match self.phase {
                 Phase::Idle | Phase::Message | Phase::Pasted => self.start(),
                 Phase::Starting | Phase::Listening => self.stop(),
-                Phase::Preview => self.paste(None),
+                Phase::Preview => self.resume(),
                 _ => {}
             },
             Cmd::Stop if self.phase.recording() => self.stop(),
@@ -298,6 +308,11 @@ impl Ctl {
             terminal: self.target.class().is_some_and(|c| crate::config::is_terminal(c, &cfg.terminal_classes)),
             platform: std::env::consts::OS,
             languages: self.languages(),
+            shortcut: crate::shortcuts::status(&self.app)
+                .bound
+                .into_iter()
+                .find(|(id, trigger)| id == crate::shortcuts::DICTATE && !trigger.is_empty())
+                .map(|(_, trigger)| trigger),
         }
     }
 
@@ -324,11 +339,29 @@ impl Ctl {
         self.partial.clear();
         self.message = None;
         self.result = None;
+        self.earlier = None;
         self.mode = LanguageMode::parse(&self.cfg().language).unwrap_or_default();
         // Where to paste: the window active now, before the pill exists.
         self.target = self.block_on(desktop.target());
         self.set_phase(Phase::Starting);
         self.block_on(desktop.show_pill(&app, true));
+        self.listen(t0);
+    }
+
+    /// The shortcut in the preview: record more and add it to the text. The paste target, the
+    /// language and the pill stay as they are.
+    fn resume(&mut self) {
+        let t0 = Instant::now();
+        let Some(result) = self.result.take() else { return };
+        self.earlier = Some((self.text.trim().to_string(), result));
+        self.partial.clear();
+        self.message = None;
+        self.set_phase(Phase::Starting);
+        self.listen(t0);
+    }
+
+    fn listen(&mut self, t0: Instant) {
+        let app = self.app.clone();
 
         let st = app.state::<AppState>();
         let pipeline = match st.dictation_pipeline(self.mode, self.lang) {
@@ -363,7 +396,7 @@ impl Ctl {
     fn on_event(&mut self, e: DictationEvent) {
         match e {
             DictationEvent::Text { committed, partial } if self.phase == Phase::Listening => {
-                self.text = committed;
+                self.text = self.with_earlier(&committed);
                 self.partial = partial;
                 let _ = self.app.emit_to(
                     windows::PILL,
@@ -386,15 +419,22 @@ impl Ctl {
         self.set_phase(Phase::Finishing);
         let result = session.finish();
         self.app.state::<AppState>().set_meeting_dictating(false);
-        let out = match result {
+        let mut out = match result {
             Ok(o) => o,
             Err(e) => return self.fail(&format!("Dictation failed: {e}")),
         };
         self.partial.clear();
-        self.text = out.text.clone();
-        self.lang = out.lang;
-        self.remember_lang();
-        let empty = out.text.is_empty();
+        if !out.text.is_empty() {
+            self.lang = out.lang;
+            self.remember_lang();
+        }
+        self.text = self.with_earlier(&out.text);
+        if let Some((_, mut before)) = self.earlier.take() {
+            // One recording for Tab to decode again.
+            before.audio.extend_from_slice(&out.audio);
+            out.audio = before.audio;
+        }
+        let empty = self.text.is_empty();
         self.result = Some(out);
         if empty {
             self.message = Some("Nothing heard".into());
@@ -413,7 +453,20 @@ impl Ctl {
             s.cancel();
         }
         self.app.state::<AppState>().set_meeting_dictating(false);
+        // Esc while recording more drops only the new part.
+        if let Some((text, result)) = self.earlier.take() {
+            self.text = text;
+            self.partial.clear();
+            self.result = Some(result);
+            return self.set_phase(Phase::Preview);
+        }
         self.close(true);
+    }
+
+    /// `new` after the preview text being added to, if recording more.
+    fn with_earlier(&self, new: &str) -> String {
+        let before = self.earlier.as_ref().map_or("", |(t, _)| t.as_str());
+        [before, new.trim()].iter().filter(|t| !t.is_empty()).copied().collect::<Vec<_>>().join(" ")
     }
 
     /// Hides the pill and, with `refocus`, gives the keyboard back to the target window.
@@ -428,6 +481,7 @@ impl Ctl {
         self.partial.clear();
         self.message = None;
         self.result = None;
+        self.earlier = None;
         self.set_phase(Phase::Idle);
     }
 
@@ -580,9 +634,20 @@ mod tests {
         assert_eq!(g.release(Trigger::Hybrid, Phase::Listening, at(150)), Action::None);
         assert_eq!(g.press(Trigger::Hybrid, Phase::Listening, at(3000)), Action::Stop);
         assert_eq!(g.release(Trigger::Hybrid, Phase::Finishing, at(3100)), Action::None);
-        // In the preview, the shortcut pastes.
-        assert_eq!(g.press(Trigger::Hybrid, Phase::Preview, at(5000)), Action::Paste);
-        assert_eq!(g.release(Trigger::Hybrid, Phase::Pasting, at(5100)), Action::None);
+        // In the preview, the shortcut records more; a tap keeps recording.
+        assert_eq!(g.press(Trigger::Hybrid, Phase::Preview, at(5000)), Action::Resume);
+        assert_eq!(g.release(Trigger::Hybrid, Phase::Listening, at(5100)), Action::None);
+        assert_eq!(g.press(Trigger::Hybrid, Phase::Listening, at(8000)), Action::Stop);
+    }
+
+    #[test]
+    fn holding_in_the_preview_records_more_until_release() {
+        let mut g = Gesture::default();
+        assert_eq!(g.press(Trigger::Hybrid, Phase::Preview, at(0)), Action::Resume);
+        assert_eq!(g.release(Trigger::Hybrid, Phase::Listening, at(2000)), Action::Stop);
+        let mut g = Gesture::default();
+        assert_eq!(g.press(Trigger::Hold, Phase::Preview, at(0)), Action::Resume);
+        assert_eq!(g.release(Trigger::Hold, Phase::Listening, at(300)), Action::Stop);
     }
 
     #[test]

@@ -13,7 +13,7 @@
 | Global shortcut, default Ctrl+Å (Linux) / Cmd+Å (macOS), configurable, conflict warning | `shortcuts.rs`: XDG GlobalShortcuts portal on Linux (KDE confirms the keys and lets the user rebind them), Tauri global-shortcut plugin on macOS |
 | Toggle + push-to-talk hybrid (tap toggles, hold > 400 ms talks until release); toggle-only and hold-only | `dictation.rs` `Gesture` (portal reports press and release) |
 | Pill at the bottom centre: waveform, live text, language badge | `app/ui/src/pill/Pill.svelte`; placed by KWin script on KDE, by the app elsewhere |
-| Preview mode (editable text, Enter paste, Ctrl+C copy, Esc discard) and direct mode ("Pasted" flash with Copy) | `Pill.svelte`, `dictation.rs` |
+| Preview mode (editable text, Enter paste, Ctrl+C copy, Esc discard; the shortcut again records more and adds it, tap or hold) and direct mode ("Pasted" flash with Copy) | `Pill.svelte`, `dictation.rs` |
 | Paste into the window that was active at start | KWin script remembers and re-activates the window; RemoteDesktop portal sends Ctrl+V (Ctrl+Shift+V in terminals), `ydotool` fallback; macOS: NSWorkspace + CGEvent Cmd+V |
 | Clipboard restored after paste | `desktop.rs`, 500 ms after the keystroke; the transient text is hidden from clipboard history |
 | Esc cancels, Tab cycles Auto → SV → EN | while listening the switch applies to the next segment; in preview the kept audio is decoded again |

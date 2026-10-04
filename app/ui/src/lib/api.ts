@@ -85,6 +85,8 @@ export interface PillState {
   terminal: boolean;
   platform: string;
   languages: LanguageMode[];
+  /** The dictation shortcut as the desktop shows it; pressing it in the preview records more. */
+  shortcut: string | null;
 }
 
 export type PillEvent =

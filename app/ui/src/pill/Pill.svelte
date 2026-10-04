@@ -1,7 +1,7 @@
 <script lang="ts">
   // Dictation pill (SPEC 8.4), at the bottom centre of the screen. Listening: a small waveform
   // and the live text. Done (preview mode): the final text, editable, with
-  // Enter paste · Ctrl+C copy · Esc discard · Tab language. Direct mode flashes "Pasted" with a
+  // Enter paste · Ctrl+C copy · Esc discard · Tab language; the shortcut records more. Direct mode flashes "Pasted" with a
   // Copy button. The window is transparent; the pill sits at its bottom edge.
   import { onDestroy, onMount, tick } from "svelte";
   import { api, errorText, onDictation, type LanguageMode, type PillState } from "../lib/api";
@@ -136,6 +136,7 @@
           {:else}
             <kbd>⏎</kbd> Paste{st.terminal ? ` (${mod}Shift+V)` : ""} <kbd>{mod}C</kbd> Copy <kbd>Esc</kbd> Discard
             <kbd>Tab</kbd> {langLabel[st.language]}
+            {#if st.shortcut}<kbd>{st.shortcut}</kbd> More{/if}
           {/if}
         </div>
       {:else if busy}
