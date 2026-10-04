@@ -201,6 +201,7 @@ export const api = {
   openPath: (path: string) => invoke<void>("open_path", { path }),
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),
   openTranscripts: () => invoke<void>("open_transcripts_folder"),
+  openNotices: () => invoke<void>("open_notices"),
   configGet: () => invoke<ConfigView>("config_get"),
   configSet: (config: Config) => invoke<void>("config_set", { config }),
   pickFolder: (current: string | null) => invoke<string | null>("pick_folder", { current }),

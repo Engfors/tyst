@@ -78,6 +78,7 @@ fn main() {
             commands::open_path,
             commands::reveal_path,
             commands::open_transcripts_folder,
+            commands::open_notices,
             commands::config_get,
             commands::config_set,
             commands::pick_folder,

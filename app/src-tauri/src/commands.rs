@@ -93,6 +93,16 @@ pub fn open_transcripts_folder(app: AppHandle) -> CmdResult {
     open(&app, &dir)
 }
 
+/// Opens the third-party notices and licenses that ship with the app (Settings › About).
+#[tauri::command]
+pub fn open_notices(app: AppHandle) -> CmdResult {
+    let file = app.path().resource_dir().map_err(|e| e.to_string())?.join("THIRD_PARTY_NOTICES.md");
+    if !file.is_file() {
+        return Err("The third-party notices are missing from this build.".into());
+    }
+    open(&app, &file)
+}
+
 /// Opens a file or folder with its default application. On Linux the application gets the host's
 /// environment, not the AppImage's ([`crate::appimage`]).
 fn open(app: &AppHandle, path: &std::path::Path) -> CmdResult {

@@ -364,13 +364,26 @@
       {:else if tab === "about"}
         <h2>Tyst {view.version}</h2>
         <p>Local meeting transcription. Audio and text never leave this computer.</p>
-        <h3>Models and libraries</h3>
+        <p class="muted small">
+          Tyst only goes online when you ask it to download the speech models, and, if update
+          checks are on, to ask GitHub for the latest version. Nothing you say or write is ever sent.
+        </p>
+        <h3>Models</h3>
         <ul class="credits">
-          <li><b>Klang Pianissimo</b> (KlangAI/pianissimo-sv), © Klang AI AB, CC BY 4.0.</li>
-          <li><b>NVIDIA Parakeet TDT 0.6B v3</b>, © NVIDIA, CC BY 4.0.</li>
-          <li><b>Silero VAD</b>, MIT.</li>
-          <li><b>ONNX Runtime</b>, MIT. <b>Tauri</b>, MIT / Apache-2.0. <b>Svelte</b>, MIT.</li>
+          <li><b>Klang Pianissimo</b> (KlangAI/pianissimo-sv), © Klang AI AB, CC BY 4.0. Tyst also runs a copy of its encoder rewritten on this computer (same weights, attention computed without padding).</li>
+          <li><b>NVIDIA Parakeet TDT 0.6B v3</b>, © NVIDIA, CC BY 4.0. Only used when English is forced.</li>
+          <li><b>Silero VAD</b>, © Silero Team, MIT.</li>
         </ul>
+        <h3>Libraries</h3>
+        <ul class="credits">
+          <li><b>ONNX Runtime</b>, © Microsoft, MIT.</li>
+          <li><b>WebRTC audio processing</b> (echo cancellation), © Google, BSD-3-Clause, with <b>Abseil</b>, Apache-2.0.</li>
+          <li><b>Tauri</b>, MIT / Apache-2.0. <b>Svelte</b>, MIT. And many Rust crates, each under its own license.</li>
+        </ul>
+        <p>
+          <button onclick={() => api.openNotices().catch((e) => (status = errorText(e)))}>Third-party notices…</button>
+        </p>
+        <p class="muted small">Tyst is licensed under MIT OR Apache-2.0.</p>
         <p class="muted small">Settings: <span class="mono">{view.config_dir}</span></p>
       {/if}
       {#if status}<p class="status">{status}</p>{/if}
