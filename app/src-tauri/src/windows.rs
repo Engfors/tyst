@@ -6,6 +6,8 @@
 //! Wayland, where clients cannot keep themselves on top or position themselves, a KWin rule does
 //! that job ([`crate::kwin`]).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tauri::{AppHandle, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 
 use crate::config::WindowGeometry;
@@ -16,6 +18,11 @@ pub const SETTINGS: &str = "settings";
 pub const ONBOARDING: &str = "onboarding";
 /// Window title; the KWin rule matches it.
 pub const MEETING_TITLE: &str = "Tyst Meeting";
+
+/// Whether the meeting window was last shown or hidden. Tracked here because on Linux
+/// `show()`/`hide()` are queued to the GTK loop, so `is_visible()` still reports the old state
+/// right after the call and the tray label would be computed from it.
+static MEETING_SHOWN: AtomicBool = AtomicBool::new(false);
 
 fn meeting_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     if let Some(w) = app.get_webview_window(MEETING) {
@@ -80,6 +87,7 @@ pub fn show_meeting(app: &AppHandle) {
         Ok(w) => {
             // show() must not activate: the window is non-focusable until the name prompt.
             let _ = w.show();
+            MEETING_SHOWN.store(true, Ordering::Release);
             crate::tray::refresh(app);
         }
         Err(e) => log::error!("meeting window: {e}"),
@@ -91,6 +99,7 @@ pub fn hide_meeting(app: &AppHandle) {
         let _ = w.hide();
         let _ = w.set_focusable(false);
     }
+    MEETING_SHOWN.store(false, Ordering::Release);
     if let Err(e) = app.state::<AppState>().config().save() {
         log::error!("saving config: {e}");
     }
@@ -98,7 +107,7 @@ pub fn hide_meeting(app: &AppHandle) {
 }
 
 pub fn meeting_visible(app: &AppHandle) -> bool {
-    app.get_webview_window(MEETING).and_then(|w| w.is_visible().ok()).unwrap_or(false)
+    MEETING_SHOWN.load(Ordering::Acquire) && app.get_webview_window(MEETING).is_some()
 }
 
 pub fn toggle_meeting(app: &AppHandle) {
