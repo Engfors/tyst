@@ -30,6 +30,7 @@ models/models.toml    pinned model manifest (Hugging Face repo + revision + SHA-
                       `models fetch` derives locally, e.g. the banded encoder from `encoder_rewrite`).
 eval/                 Phase 0 Python harness and the clip manifest (no audio in git).
 docs/                 ADRs and phase reports.
+packaging/            Linux desktop file and AppImage scripts, third-party notices generator.
 ```
 
 ## Commands
@@ -41,11 +42,21 @@ cargo build --release -p tyst-cli
 ./target/release/tyst-cli transcribe clip.wav
 ./target/release/tyst-cli live --mic                      # Enter stops; prints latency and CPU stats
 ./target/release/tyst-cli live --simulate clip.wav        # same, with a file played in real time
-./target/release/tyst-cli meeting --mic --system          # two-channel meeting, no UI
+./target/release/tyst-cli meeting --mic --system          # two-channel meeting, no UI, echo cancelled
+./target/release/tyst-cli echo-cancel --mic me.wav --system others.wav --out clean.wav   # offline AEC
+./target/release/tyst-cli check-update                    # GitHub latest release ($GITHUB_TOKEN)
 (cd app/ui && npm ci && npm run check && npm run tauri build -- --no-bundle)   # app -> target/release/tyst
+packaging/linux/fetch-tools.sh                            # pinned, hash-checked AppImage tools
 (cd app/ui && NO_STRIP=true npm run tauri build -- --bundles appimage)          # Linux AppImage (CI artifact too)
+packaging/linux/finish-appimage.sh target/release/bundle/appimage/*.AppImage   # go-w repack (+ update info, signing)
+packaging/linux/smoke-test-appimage.sh target/release/bundle/appimage/*.AppImage
+packaging/notices/generate.sh                             # THIRD_PARTY_NOTICES.md (needs cargo-about)
 ./target/release/tyst-cli bench eval/manifest.toml --baseline <harness summary.json>
 ```
+
+`tyst-runtime`'s default `aec` feature builds WebRTC's echo canceller from source: it needs `meson`, `ninja` and
+a C++ compiler. A tag `vX.Y.Z` runs `.github/workflows/release.yml` (draft release, GPG-signed checksums).
+Actions are pinned to commit SHAs; keep them pinned when updating. `cargo audit` runs in CI (`.cargo/audit.toml`).
 
 Model tests in `crates/tyst-core/tests/models.rs` run only when `TYST_MODELS` points at installed models.
 On Linux, building the `mic` feature needs ALSA headers and `pipewire` needs PipeWire headers plus clang;

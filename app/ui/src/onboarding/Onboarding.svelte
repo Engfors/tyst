@@ -151,8 +151,12 @@
       <h1>Preferences</h1>
       <label class="opt"><input type="checkbox" bind:checked={view.config.launch_at_login} onchange={save} /> Launch Tyst at login</label>
       <label class="opt"><input type="checkbox" bind:checked={view.config.meetings.system_audio} onchange={save} disabled={!view.system_audio_supported} /> Transcribe system audio as “Others”</label>
+      {#if view.detect_supported}
+        <label class="opt"><input type="checkbox" bind:checked={view.config.meetings.detect} onchange={save} /> Ask to transcribe when a meeting app starts using the microphone</label>
+      {/if}
+      <label class="opt"><input type="checkbox" bind:checked={view.config.updates.check} onchange={save} /> Check GitHub for new versions</label>
       <div class="tip">
-        <b>Use headphones in meetings.</b> On speakers, the microphone also picks up the other participants, and their words appear twice.
+        <b>Headphones work best in meetings.</b> On speakers, the microphone also picks up the other participants; Tyst removes their voices from yours using the system audio, but headphones are cleaner.
       </div>
     {:else if step === 6}
       <h1>Try it</h1>

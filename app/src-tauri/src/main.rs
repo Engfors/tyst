@@ -10,13 +10,16 @@ mod autostart;
 mod commands;
 mod config;
 mod desktop;
+mod detect;
 mod dictation;
 #[cfg(target_os = "linux")]
 mod kwin;
+mod secrets;
 mod shortcuts;
 mod sources;
 mod state;
 mod tray;
+mod updates;
 mod windows;
 
 use tauri::{AppHandle, Manager, RunEvent};
@@ -60,6 +63,8 @@ fn main() {
         .manage(commands::FetchState::default())
         .manage(desktop::Desktop::default())
         .manage(shortcuts::Shortcuts::default())
+        .manage(secrets::KeyboardToken::default())
+        .manage(updates::Updates::default())
         .invoke_handler(tauri::generate_handler![
             commands::app_state,
             commands::meeting_start,
@@ -73,6 +78,7 @@ fn main() {
             commands::open_path,
             commands::reveal_path,
             commands::open_transcripts_folder,
+            commands::open_notices,
             commands::config_get,
             commands::config_set,
             commands::pick_folder,
@@ -101,6 +107,11 @@ fn main() {
             commands::dictation_info,
             commands::dictation_setup_shortcuts,
             commands::dictation_setup_keyboard,
+            commands::meeting_prompt_answer,
+            commands::updates_state,
+            commands::updates_check,
+            commands::updates_set_token,
+            commands::updates_open_release,
         ])
         .setup(|app| {
             // Menu bar app: no Dock icon (SPEC 8.2).
@@ -116,6 +127,12 @@ fn main() {
             let cfg = handle.state::<AppState>().config();
             shortcuts::register(&handle);
             windows::prepare_pill(&handle);
+            {
+                let handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    handle.state::<secrets::KeyboardToken>().migrate(&handle).await;
+                });
+            }
             if !cfg.onboarded {
                 windows::show_onboarding(&handle);
             } else {
@@ -128,6 +145,9 @@ fn main() {
                 }
                 let args: Vec<String> = std::env::args().collect();
                 handle_args(&handle, &args);
+                updates::start(&handle);
+                detect::start(&handle);
+                AppState::unload_when_idle(&handle);
                 std::thread::spawn(move || offer_recovery(&handle));
             }
             Ok(())

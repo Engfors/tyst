@@ -56,7 +56,8 @@
   function onKey(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
-      act(listening ? api.dictationCancel : api.dictationDiscard);
+      if (phase === "prompt") act(() => api.meetingPromptAnswer(false));
+      else act(listening ? api.dictationCancel : api.dictationDiscard);
     } else if (e.key === "Tab") {
       e.preventDefault();
       if (listening || phase === "preview") act(api.dictationCycleLanguage);
@@ -153,6 +154,17 @@
         </div>
       {:else if phase === "message"}
         <div class="row"><span class="flash">{st.message}</span></div>
+      {:else if phase === "prompt"}
+        <div class="row">
+          <span class="rec" aria-hidden="true"></span>
+          <span class="flash prompt">{st.message}</span>
+        </div>
+        <div class="row actions">
+          {#if st.meeting_shortcut}<span class="hints"><kbd>{st.meeting_shortcut}</kbd> also starts</span>{/if}
+          <span class="spacer"></span>
+          <button onclick={() => act(() => api.meetingPromptAnswer(false))}>Not now</button>
+          <button class="primary" onclick={() => act(() => api.meetingPromptAnswer(true))}>Start transcribing</button>
+        </div>
       {/if}
       {#if error}<div class="error">{error}</div>{/if}
     </div>
@@ -302,6 +314,28 @@
 
   .flash {
     font-size: 14px;
+  }
+
+  .prompt {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .rec {
+    width: 9px;
+    height: 9px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--rec, #e5484d);
+  }
+
+  .actions {
+    margin-top: 4px;
+    gap: 6px;
+  }
+
+  .actions .hints {
+    margin: 0;
   }
 
   .spacer {

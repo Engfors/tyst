@@ -16,8 +16,8 @@ use objc2::runtime::AnyObject;
 use objc2_core_audio::{
     AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID, AudioDeviceIOProcID, AudioDeviceStart, AudioDeviceStop,
     AudioHardwareCreateAggregateDevice, AudioHardwareCreateProcessTap, AudioHardwareDestroyAggregateDevice,
-    AudioHardwareDestroyProcessTap, AudioObjectGetPropertyData, AudioObjectID, AudioObjectPropertyAddress,
-    CATapDescription, kAudioAggregateDeviceIsPrivateKey, kAudioAggregateDeviceIsStackedKey,
+    AudioHardwareDestroyProcessTap, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectID,
+    AudioObjectPropertyAddress, CATapDescription, kAudioAggregateDeviceIsPrivateKey, kAudioAggregateDeviceIsStackedKey,
     kAudioAggregateDeviceMainSubDeviceKey, kAudioAggregateDeviceNameKey, kAudioAggregateDeviceSubDeviceListKey,
     kAudioAggregateDeviceTapAutoStartKey, kAudioAggregateDeviceTapListKey, kAudioAggregateDeviceUIDKey,
     kAudioDevicePropertyDeviceUID, kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioObjectPropertyElementMain,
@@ -63,11 +63,11 @@ impl Default for SystemAudioTap {
     }
 }
 
-fn check(status: i32, what: &str) -> Result<(), CaptureError> {
+pub(crate) fn check(status: i32, what: &str) -> Result<(), CaptureError> {
     if status == 0 { Ok(()) } else { Err(CaptureError::Device(format!("{what} failed (OSStatus {status})"))) }
 }
 
-fn address(selector: u32) -> AudioObjectPropertyAddress {
+pub(crate) fn address(selector: u32) -> AudioObjectPropertyAddress {
     AudioObjectPropertyAddress {
         mSelector: selector,
         mScope: kAudioObjectPropertyScopeGlobal,
@@ -76,7 +76,7 @@ fn address(selector: u32) -> AudioObjectPropertyAddress {
 }
 
 /// Reads a fixed-size property.
-unsafe fn get<T: Copy>(object: AudioObjectID, selector: u32, mut value: T) -> Result<T, CaptureError> {
+pub(crate) unsafe fn get<T: Copy>(object: AudioObjectID, selector: u32, mut value: T) -> Result<T, CaptureError> {
     let mut addr = address(selector);
     let mut size = size_of::<T>() as u32;
     let status = unsafe {
@@ -91,6 +91,36 @@ unsafe fn get<T: Copy>(object: AudioObjectID, selector: u32, mut value: T) -> Re
     };
     check(status, "AudioObjectGetPropertyData")?;
     Ok(value)
+}
+
+/// Reads a variable-length array property.
+pub(crate) unsafe fn get_array<T: Copy + Default>(
+    object: AudioObjectID,
+    selector: u32,
+) -> Result<Vec<T>, CaptureError> {
+    let mut addr = address(selector);
+    let mut size = 0u32;
+    let status = unsafe {
+        AudioObjectGetPropertyDataSize(object, NonNull::from(&mut addr), 0, std::ptr::null(), NonNull::from(&mut size))
+    };
+    check(status, "AudioObjectGetPropertyDataSize")?;
+    let mut values = vec![T::default(); size as usize / size_of::<T>()];
+    if values.is_empty() {
+        return Ok(values);
+    }
+    let status = unsafe {
+        AudioObjectGetPropertyData(
+            object,
+            NonNull::from(&mut addr),
+            0,
+            std::ptr::null(),
+            NonNull::from(&mut size),
+            NonNull::new(values.as_mut_ptr()).expect("non-empty vec").cast(),
+        )
+    };
+    check(status, "AudioObjectGetPropertyData")?;
+    values.truncate(size as usize / size_of::<T>());
+    Ok(values)
 }
 
 fn default_output_uid() -> Result<String, CaptureError> {

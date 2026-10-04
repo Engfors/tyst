@@ -66,6 +66,18 @@ pub fn open(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Opens an `https://` link in the default browser (`xdg-open`).
+pub fn open_url(url: &str) -> Result<(), String> {
+    if !url.starts_with("https://") || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("not an https link".into());
+    }
+    let mut child = host_command("xdg-open").arg(url).spawn().map_err(|e| format!("xdg-open: {e}"))?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

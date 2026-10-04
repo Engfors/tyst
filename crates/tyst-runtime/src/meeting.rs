@@ -27,6 +27,7 @@ use tyst_core::transcript::{
 };
 use tyst_platform::{AudioChunk, AudioSource, CaptureError};
 
+use crate::echo::{Block, EchoCanceller, EchoReference};
 use crate::{Result, Runtime};
 
 /// Builds a source on its capture thread.
@@ -63,6 +64,8 @@ pub struct MeetingOptions {
     /// Initial session language.
     pub mode: LanguageMode,
     pub sources: Vec<(Channel, SourceFactory)>,
+    /// Cancel the system audio's echo in the microphone (SPEC 6.4) when both channels run.
+    pub echo_cancellation: bool,
 }
 
 #[derive(Default)]
@@ -142,6 +145,8 @@ struct ChannelThreads {
     channel: Channel,
     control: Sender<CaptureCmd>,
     capture: JoinHandle<()>,
+    /// Others with echo cancellation: writes the reference as audio arrives (see [`reference_tee`]).
+    tee: Option<JoinHandle<()>>,
     worker: JoinHandle<()>,
 }
 
@@ -187,7 +192,23 @@ impl Meeting {
         });
         let mut meeting =
             Self { info, shared: shared.clone(), engines, channels: Vec::new(), transcripts_dir: opts.transcripts_dir };
+        let both = [Channel::Me, Channel::Others].iter().all(|c| opts.sources.iter().any(|(s, _)| s == c));
+        let reference = (opts.echo_cancellation && both).then(|| Arc::new(EchoReference::default()));
         for (channel, factory) in opts.sources {
+            let echo = match (&reference, channel) {
+                (Some(r), Channel::Others) => Echo::Reference(r.clone()),
+                (Some(r), Channel::Me) => match EchoCanceller::new(r.clone()) {
+                    Ok(c) => {
+                        log::info!("echo cancellation on");
+                        Echo::Cancel(Box::new(c))
+                    }
+                    Err(e) => {
+                        log::warn!("echo cancellation unavailable: {e}");
+                        Echo::Off
+                    }
+                },
+                _ => Echo::Off,
+            };
             let pipeline = match pipeline(channel) {
                 Ok(p) => p,
                 Err(e) => {
@@ -195,7 +216,7 @@ impl Meeting {
                     return Err(e);
                 }
             };
-            match spawn_channel(channel, factory, pipeline, shared.clone()) {
+            match spawn_channel(channel, factory, pipeline, echo, shared.clone()) {
                 Ok(t) => meeting.channels.push(t),
                 Err(e) => {
                     meeting.abort();
@@ -300,6 +321,11 @@ impl Meeting {
             if c.capture.join().is_err() {
                 log::error!("{:?} capture thread panicked", c.channel);
             }
+            if let Some(tee) = c.tee
+                && tee.join().is_err()
+            {
+                log::error!("{:?} echo reference thread panicked", c.channel);
+            }
             if c.worker.join().is_err() {
                 log::error!("{:?} worker thread panicked", c.channel);
             }
@@ -362,27 +388,51 @@ impl StoppedMeeting {
     }
 }
 
+/// A channel's part in echo cancellation.
+enum Echo {
+    Off,
+    /// Others: writes the system audio as the reference (on its own thread, [`reference_tee`]).
+    Reference(Arc<EchoReference>),
+    /// Me: cancels the reference's echo before the pipeline.
+    Cancel(Box<EchoCanceller>),
+}
+
 fn spawn_channel<D: SpeechDetector + 'static>(
     channel: Channel,
     factory: SourceFactory,
     pipeline: ChannelPipeline<D>,
+    echo: Echo,
     shared: Arc<Shared>,
 ) -> Result<ChannelThreads, CaptureError> {
     let (audio_tx, audio_rx) = mpsc::channel::<AudioChunk>();
     let (control, control_rx) = mpsc::channel::<CaptureCmd>();
     let (started_tx, started_rx) = mpsc::sync_channel::<Result<String, CaptureError>>(1);
+    // The worker spends time decoding; the echo reference must not wait for it, or Me (which
+    // waits for the reference) would fall behind and cancel against silence.
+    let (source_tx, tee, echo) = match echo {
+        Echo::Reference(reference) => {
+            let (tx, rx) = mpsc::channel::<AudioChunk>();
+            let shared = shared.clone();
+            let tee = std::thread::Builder::new()
+                .name(format!("tyst-echo-ref-{channel:?}"))
+                .spawn(move || reference_tee(rx, audio_tx, reference, shared))
+                .map_err(|e| CaptureError::Device(e.to_string()))?;
+            (tx, Some(tee), Echo::Off)
+        }
+        other => (audio_tx, None, other),
+    };
     let capture = {
         let shared = shared.clone();
         std::thread::Builder::new()
             .name(format!("tyst-capture-{channel:?}"))
-            .spawn(move || capture_thread(channel, factory, audio_tx, control_rx, started_tx, shared))
+            .spawn(move || capture_thread(channel, factory, source_tx, control_rx, started_tx, shared))
             .map_err(|e| CaptureError::Device(e.to_string()))?
     };
     let worker = std::thread::Builder::new()
         .name(format!("tyst-worker-{channel:?}"))
-        .spawn(move || worker_thread(channel, pipeline, audio_rx, shared))
+        .spawn(move || worker_thread(channel, pipeline, echo, audio_rx, shared))
         .map_err(|e| CaptureError::Device(e.to_string()))?;
-    let threads = ChannelThreads { channel, control, capture, worker };
+    let threads = ChannelThreads { channel, control, capture, tee, worker };
     match started_rx.recv() {
         Ok(Ok(device)) => {
             log::info!("{channel:?} capture started on {device}");
@@ -390,10 +440,38 @@ fn spawn_channel<D: SpeechDetector + 'static>(
         }
         Ok(Err(e)) => {
             let _ = threads.capture.join();
+            if let Some(tee) = threads.tee {
+                let _ = tee.join();
+            }
             let _ = threads.worker.join();
             Err(e)
         }
         Err(_) => Err(CaptureError::Device("capture thread exited".into())),
+    }
+}
+
+/// Writes system audio into the echo reference as soon as it is captured, then hands it on to
+/// the Others worker.
+fn reference_tee(
+    rx: Receiver<AudioChunk>,
+    worker: Sender<AudioChunk>,
+    reference: Arc<EchoReference>,
+    shared: Arc<Shared>,
+) {
+    let mut resampler: Option<(u32, Resampler)> = None;
+    for chunk in rx {
+        let r = match &mut resampler {
+            Some((rate, r)) if *rate == chunk.sample_rate => r,
+            _ => &mut resampler.insert((chunk.sample_rate, Resampler::new(chunk.sample_rate, SAMPLE_RATE))).1,
+        };
+        let pcm = r.push(&chunk.samples);
+        if !pcm.is_empty() {
+            let at = shared.position_at(chunk.captured_at).saturating_sub(pcm.len() as u64);
+            reference.push(at, &pcm);
+        }
+        if worker.send(chunk).is_err() {
+            break;
+        }
     }
 }
 
@@ -443,42 +521,34 @@ fn capture_thread(
 
 fn worker_thread<D: SpeechDetector>(
     channel: Channel,
-    mut pipeline: ChannelPipeline<D>,
+    pipeline: ChannelPipeline<D>,
+    mut echo: Echo,
     rx: Receiver<AudioChunk>,
     shared: Arc<Shared>,
 ) {
     let mut resampler: Option<(u32, Resampler)> = None;
-    let gap = (GAP.as_secs_f64() * SAMPLE_RATE as f64) as u64;
-    let (mut level_sum, mut level_n) = (0.0f64, 0usize);
     let mut flushed_for_pause = false;
-    let mut dictating = false;
-    let mut mode = pipeline.router_mut().mode();
-    let fail = |e: tyst_core::Error| {
-        log::error!("{channel:?} pipeline: {e}");
-        shared.emit(MeetingEvent::Error { channel: Some(channel), message: e.to_string() });
-    };
+    let mut feed = Feed::new(channel, pipeline, shared.clone());
     loop {
         let chunk = match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(c) => c,
             Err(RecvTimeoutError::Timeout) => {
+                if let Echo::Cancel(aec) = &mut echo {
+                    feed.blocks(aec.poll(shared.position_at(Instant::now())));
+                }
                 // Paused: finalize the open segment now rather than when capture resumes.
                 if shared.paused.load(Ordering::SeqCst) && !flushed_for_pause {
                     flushed_for_pause = true;
-                    match pipeline.skip_to(shared.position_at(Instant::now())) {
-                        Ok(ev) => shared.record(channel, ev),
-                        Err(e) => fail(e),
+                    if let Echo::Cancel(aec) = &mut echo {
+                        feed.blocks(aec.flush());
                     }
+                    feed.skip_to(shared.position_at(Instant::now()));
                 }
                 continue;
             }
             Err(RecvTimeoutError::Disconnected) => break,
         };
         flushed_for_pause = false;
-        let wanted = mode_from_u8(shared.mode.load(Ordering::SeqCst));
-        if wanted != mode {
-            mode = wanted;
-            pipeline.router_mut().set_mode(mode);
-        }
         let r = match &mut resampler {
             Some((rate, r)) if *rate == chunk.sample_rate => r,
             _ => &mut resampler.insert((chunk.sample_rate, Resampler::new(chunk.sample_rate, SAMPLE_RATE))).1,
@@ -489,42 +559,101 @@ fn worker_thread<D: SpeechDetector>(
         }
         // Where this audio belongs on the session clock; a gap means capture was interrupted.
         let at = shared.position_at(chunk.captured_at).saturating_sub(pcm.len() as u64);
-        // Dictation: Me drops its audio, ending the open segment and moving its clock along.
-        let now_dictating = channel == Channel::Me && shared.dictating.load(Ordering::SeqCst);
-        if now_dictating || dictating {
-            match pipeline.skip_to(at) {
-                Ok(ev) => shared.record(channel, ev),
-                Err(e) => fail(e),
-            }
-            dictating = now_dictating;
-            if dictating {
-                continue;
-            }
+        match &mut echo {
+            Echo::Off | Echo::Reference(_) => feed.block(at, &pcm),
+            Echo::Cancel(aec) => feed.blocks(aec.push(at, &pcm, shared.position_at(Instant::now()))),
         }
-        if at > pipeline.position() + gap {
-            log::info!("{channel:?}: capture gap of {:.1}s", (at - pipeline.position()) as f64 / SAMPLE_RATE as f64);
-            match pipeline.skip_to(at) {
-                Ok(ev) => shared.record(channel, ev),
-                Err(e) => fail(e),
-            }
+    }
+    if let Echo::Cancel(aec) = &mut echo {
+        feed.blocks(aec.flush());
+        if let Some(ms) = aec.delay_ms() {
+            log::info!("echo delay at the end: {ms} ms");
         }
-        match pipeline.push(&pcm) {
-            Ok(ev) => shared.record(channel, ev),
-            Err(e) => fail(e),
-        }
-        for &x in &pcm {
-            level_sum += (x * x) as f64;
-            level_n += 1;
-            if level_n == LEVEL_INTERVAL {
-                shared.emit(MeetingEvent::Level { channel, rms: (level_sum / level_n as f64).sqrt() as f32 });
-                level_sum = 0.0;
-                level_n = 0;
+    }
+    feed.flush();
+}
+
+/// Feeds a channel's 16 kHz audio into its pipeline: language switches, dictation, capture gaps
+/// and the level meter.
+struct Feed<D: SpeechDetector> {
+    channel: Channel,
+    pipeline: ChannelPipeline<D>,
+    shared: Arc<Shared>,
+    mode: LanguageMode,
+    dictating: bool,
+    level_sum: f64,
+    level_n: usize,
+}
+
+impl<D: SpeechDetector> Feed<D> {
+    fn new(channel: Channel, mut pipeline: ChannelPipeline<D>, shared: Arc<Shared>) -> Self {
+        let mode = pipeline.router_mut().mode();
+        Self { channel, pipeline, shared, mode, dictating: false, level_sum: 0.0, level_n: 0 }
+    }
+
+    fn record(&self, r: tyst_core::Result<Vec<PipelineEvent>>) {
+        match r {
+            Ok(ev) => self.shared.record(self.channel, ev),
+            Err(e) => {
+                log::error!("{:?} pipeline: {e}", self.channel);
+                self.shared.emit(MeetingEvent::Error { channel: Some(self.channel), message: e.to_string() });
             }
         }
     }
-    match pipeline.flush() {
-        Ok(ev) => shared.record(channel, ev),
-        Err(e) => fail(e),
+
+    fn skip_to(&mut self, at: u64) {
+        let r = self.pipeline.skip_to(at);
+        self.record(r);
+    }
+
+    fn blocks(&mut self, blocks: Vec<Block>) {
+        for (at, pcm) in blocks {
+            self.block(at, &pcm);
+        }
+    }
+
+    /// Audio that starts at session position `at`.
+    fn block(&mut self, at: u64, pcm: &[f32]) {
+        let wanted = mode_from_u8(self.shared.mode.load(Ordering::SeqCst));
+        if wanted != self.mode {
+            self.mode = wanted;
+            self.pipeline.router_mut().set_mode(wanted);
+        }
+        // Dictation: Me drops its audio, ending the open segment and moving its clock along.
+        let now_dictating = self.channel == Channel::Me && self.shared.dictating.load(Ordering::SeqCst);
+        if now_dictating || self.dictating {
+            self.skip_to(at);
+            self.dictating = now_dictating;
+            if self.dictating {
+                return;
+            }
+        }
+        let gap = (GAP.as_secs_f64() * SAMPLE_RATE as f64) as u64;
+        if at > self.pipeline.position() + gap {
+            log::info!(
+                "{:?}: capture gap of {:.1}s",
+                self.channel,
+                (at - self.pipeline.position()) as f64 / SAMPLE_RATE as f64
+            );
+            self.skip_to(at);
+        }
+        let r = self.pipeline.push(pcm);
+        self.record(r);
+        for &x in pcm {
+            self.level_sum += (x * x) as f64;
+            self.level_n += 1;
+            if self.level_n == LEVEL_INTERVAL {
+                let rms = (self.level_sum / self.level_n as f64).sqrt() as f32;
+                self.shared.emit(MeetingEvent::Level { channel: self.channel, rms });
+                self.level_sum = 0.0;
+                self.level_n = 0;
+            }
+        }
+    }
+
+    fn flush(&mut self) {
+        let r = self.pipeline.flush();
+        self.record(r);
     }
 }
 
@@ -664,6 +793,7 @@ mod tests {
                 app: "Tyst test".into(),
                 mode: LanguageMode::Auto,
                 sources,
+                echo_cancellation: true,
             },
             tx,
         )
@@ -781,6 +911,7 @@ mod tests {
                 app: "Tyst test".into(),
                 mode: LanguageMode::Auto,
                 sources: vec![(Channel::Me, bad)],
+                echo_cancellation: false,
             },
             tx,
         );

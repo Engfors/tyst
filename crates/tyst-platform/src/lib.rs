@@ -17,6 +17,7 @@ pub mod macos_input;
 pub mod macos_tap;
 #[cfg(feature = "mic")]
 pub mod mic;
+pub mod mic_watch;
 #[cfg(all(target_os = "linux", feature = "pipewire"))]
 pub mod pipewire;
 #[cfg(all(target_os = "linux", feature = "desktop"))]

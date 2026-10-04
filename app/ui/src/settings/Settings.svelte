@@ -1,8 +1,8 @@
 <script lang="ts">
-  // Settings (SPEC 8.6): General, Dictation, Meetings, Models, Vocabulary, About. Changes save
-  // at once.
+  // Settings (SPEC 8.6): General, Dictation, Meetings, Models, Vocabulary, Updates, About.
+  // Changes save at once.
   import { onDestroy, onMount } from "svelte";
-  import { api, errorText, type ConfigView, type DictationInfo } from "../lib/api";
+  import { api, errorText, onUpdates, type ConfigView, type DictationInfo, type UpdateView } from "../lib/api";
   import Models from "../lib/Models.svelte";
   import Vocabulary from "../lib/Vocabulary.svelte";
 
@@ -12,6 +12,7 @@
     ["meetings", "Meetings"],
     ["models", "Models"],
     ["vocabulary", "Vocabulary"],
+    ["updates", "Updates"],
     ["about", "About"],
   ] as const;
   type Tab = (typeof tabs)[number][0];
@@ -21,12 +22,43 @@
   let status = $state<string | null>(null);
   let info = $state<DictationInfo | null>(null);
   let terminals = $state("");
+  let meetingApps = $state("");
   let infoTimer: ReturnType<typeof setInterval> | undefined;
+  let updates = $state<UpdateView | null>(null);
+  let token = $state("");
+  let unlistenUpdates: (() => void) | undefined;
+
+  async function checkNow() {
+    try {
+      updates = await api.updatesCheck();
+    } catch (e) {
+      status = errorText(e);
+    }
+  }
+
+  async function saveToken(value: string | null) {
+    try {
+      updates = await api.updatesSetToken(value);
+      token = "";
+      status = value ? "Token saved in the keychain." : "Token removed.";
+    } catch (e) {
+      status = errorText(e);
+    }
+  }
 
   const shortcutNames: Record<string, string> = { dictate: "Dictate", "toggle-meeting": "Start/stop meeting" };
 
   async function refreshInfo() {
     info = await api.dictationInfo().catch(() => null);
+  }
+
+  function saveMeetingApps() {
+    if (!view) return;
+    view.config.meetings.detect_apps = meetingApps
+      .split(/[\n,]/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    save();
   }
 
   function saveTerminals() {
@@ -92,12 +124,18 @@
     fromHash();
     view = await api.configGet();
     terminals = view.config.dictation.terminal_classes.join("\n");
+    meetingApps = view.config.meetings.detect_apps.join("\n");
     refreshInfo();
     // The desktop confirms shortcuts asynchronously; keep the status current while open.
     infoTimer = setInterval(refreshInfo, 3000);
+    updates = await api.updatesState();
+    unlistenUpdates = await onUpdates((v) => (updates = v));
   });
 
-  onDestroy(() => clearInterval(infoTimer));
+  onDestroy(() => {
+    clearInterval(infoTimer);
+    unlistenUpdates?.();
+  });
 </script>
 
 <svelte:window onhashchange={fromHash} />
@@ -142,6 +180,16 @@
           <span class="name">Recognition threads</span>
           <input type="number" min="1" max="16" bind:value={c.threads} onchange={save} />
           <span class="muted small">More threads: faster text, more CPU. Applies after the models reload.</span>
+        </div>
+        <div class="field">
+          <span class="name">Models in memory</span>
+          <select bind:value={c.models_idle_minutes} onchange={save}>
+            <option value={0}>Keep loaded (fastest start)</option>
+            <option value={15}>Unload after 15 idle minutes</option>
+            <option value={30}>Unload after 30 idle minutes</option>
+            <option value={60}>Unload after 1 idle hour</option>
+          </select>
+          <span class="muted small">Unloaded models free about 1 GB of memory and load again in a second or two when you next start a meeting or dictate.</span>
         </div>
       {:else if tab === "dictation"}
         {@const d = c.dictation}
@@ -221,8 +269,22 @@
           Transcribe system audio as “{c.labels.others}”
           {#if !view.system_audio_supported}<span class="muted">(not available on this platform yet)</span>{/if}
         </label>
+        <label class="check">
+          <input type="checkbox" bind:checked={c.meetings.echo_cancellation} onchange={save} disabled={!c.meetings.system_audio} />
+          Remove the others' voices from your microphone (echo cancellation, for meetings on speakers)
+        </label>
         <label class="check"><input type="checkbox" bind:checked={c.meetings.show_window_on_start} onchange={save} /> Show the meeting window when recording starts</label>
         <label class="check"><input type="checkbox" bind:checked={c.meetings.compact} onchange={save} /> Compact one-line window</label>
+        {#if view.detect_supported}
+          <label class="check"><input type="checkbox" bind:checked={c.meetings.detect} onchange={save} /> Ask to transcribe when a meeting app starts using the microphone</label>
+          {#if c.meetings.detect}
+            <div class="field">
+              <span class="name">Meeting apps</span>
+              <textarea class="mono" rows="4" bind:value={meetingApps} onchange={saveMeetingApps}></textarea>
+              <span class="muted small">One per line, matched against part of the app's name (a browser using the microphone is probably a web meeting). Tyst only asks; it never records without your answer.</span>
+            </div>
+          {/if}
+        {/if}
         <div class="field">
           <span class="name">Name prompt</span>
           <div class="row">
@@ -230,7 +292,7 @@
             <span class="muted">seconds before saving with the timestamp name</span>
           </div>
         </div>
-        <p class="muted small">Tip: use headphones. On speakers the microphone also hears the others and their words show up twice.</p>
+        <p class="muted small">On speakers the microphone also hears the others. Echo cancellation takes their voices out of “{c.labels.me}” using the system audio; headphones work best.</p>
         {#if view.platform === "linux"}
           <div class="field">
             <span class="name">KDE window rule</span>
@@ -253,16 +315,75 @@
       {:else if tab === "vocabulary"}
         <h2>Vocabulary</h2>
         <Vocabulary />
+      {:else if tab === "updates"}
+        <h2>Updates</h2>
+        <label class="check"><input type="checkbox" bind:checked={c.updates.check} onchange={save} /> Check for new versions on GitHub (at launch and once a day)</label>
+        {#if updates}
+          <div class="field">
+            <span class="name">Version</span>
+            <span>
+              This is Tyst {updates.current}.
+              {#if updates.checking}
+                Checking…
+              {:else if updates.available && updates.latest}
+                <b>Tyst {updates.latest.version} is available.</b>
+              {:else if updates.latest}
+                Up to date (latest release {updates.latest.version}).
+              {/if}
+            </span>
+            {#if updates.error}<span class="warn small">{updates.error}</span>{/if}
+            <div class="row">
+              <button onclick={checkNow} disabled={updates.checking}>Check now</button>
+              {#if updates.latest}<button onclick={() => api.updatesOpenRelease().catch((e) => (status = errorText(e)))}>{updates.available ? "Download…" : "Release page…"}</button>{/if}
+              {#if updates.last_checked}<span class="muted small">Last checked {updates.last_checked}</span>{/if}
+            </div>
+          </div>
+          {#if updates.available && updates.latest?.notes}
+            <div class="field">
+              <span class="name">What's new in {updates.latest.version}</span>
+              <pre class="notes">{updates.latest.notes}</pre>
+            </div>
+          {/if}
+          <div class="field">
+            <span class="name">GitHub token</span>
+            {#if updates.has_token}
+              <div class="row">
+                <span class="ok">Saved in the keychain</span>
+                <button onclick={() => saveToken(null)}>Remove</button>
+              </div>
+            {:else}
+              <div class="row">
+                <input type="password" class="mono" placeholder="github_pat_…" bind:value={token} autocomplete="off" />
+                <button onclick={() => saveToken(token)} disabled={!token.trim()}>Save</button>
+              </div>
+            {/if}
+            <span class="muted small">Only needed while the repository is private: a fine-grained token with read access to its contents. It is kept in the system keychain and only sent to GitHub.</span>
+          </div>
+        {/if}
+        <p class="muted small">Tyst only tells you about a new version; it never downloads or installs anything by itself.</p>
       {:else if tab === "about"}
         <h2>Tyst {view.version}</h2>
         <p>Local meeting transcription. Audio and text never leave this computer.</p>
-        <h3>Models and libraries</h3>
+        <p class="muted small">
+          Tyst only goes online when you ask it to download the speech models, and, if update
+          checks are on, to ask GitHub for the latest version. Nothing you say or write is ever sent.
+        </p>
+        <h3>Models</h3>
         <ul class="credits">
-          <li><b>Klang Pianissimo</b> (KlangAI/pianissimo-sv), © Klang AI AB, CC BY 4.0.</li>
-          <li><b>NVIDIA Parakeet TDT 0.6B v3</b>, © NVIDIA, CC BY 4.0.</li>
-          <li><b>Silero VAD</b>, MIT.</li>
-          <li><b>ONNX Runtime</b>, MIT. <b>Tauri</b>, MIT / Apache-2.0. <b>Svelte</b>, MIT.</li>
+          <li><b>Klang Pianissimo</b> (KlangAI/pianissimo-sv), © Klang AI AB, CC BY 4.0. Tyst also runs a copy of its encoder rewritten on this computer (same weights, attention computed without padding).</li>
+          <li><b>NVIDIA Parakeet TDT 0.6B v3</b>, © NVIDIA, CC BY 4.0. Only used when English is forced.</li>
+          <li><b>Silero VAD</b>, © Silero Team, MIT.</li>
         </ul>
+        <h3>Libraries</h3>
+        <ul class="credits">
+          <li><b>ONNX Runtime</b>, © Microsoft, MIT.</li>
+          <li><b>WebRTC audio processing</b> (echo cancellation), © Google, BSD-3-Clause, with <b>Abseil</b>, Apache-2.0.</li>
+          <li><b>Tauri</b>, MIT / Apache-2.0. <b>Svelte</b>, MIT. And many Rust crates, each under its own license.</li>
+        </ul>
+        <p>
+          <button onclick={() => api.openNotices().catch((e) => (status = errorText(e)))}>Third-party notices…</button>
+        </p>
+        <p class="muted small">Tyst is licensed under MIT OR Apache-2.0.</p>
         <p class="muted small">Settings: <span class="mono">{view.config_dir}</span></p>
       {/if}
       {#if status}<p class="status">{status}</p>{/if}
@@ -348,6 +469,17 @@
   }
   .credits {
     padding-left: 18px;
+  }
+  .notes {
+    white-space: pre-wrap;
+    font: inherit;
+    font-size: 12px;
+    max-height: 180px;
+    overflow-y: auto;
+    margin: 0;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
   }
   .credits li {
     margin-bottom: 4px;
