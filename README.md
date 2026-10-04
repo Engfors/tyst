@@ -3,7 +3,7 @@
 Local, privacy-first meeting transcription and dictation for macOS and Linux. Swedish and English,
 including mixed-language meetings. Nothing leaves the device.
 
-Status: **Phase 4**: AppImage built, Arch acceptance open. See [SPEC.md](SPEC.md) for the specification,
+Status: **Phase 4** (Linux AppImage) accepted on Arch. See [SPEC.md](SPEC.md) for the specification,
 [docs/phase4-report.md](docs/phase4-report.md) for the AppImage, [docs/phase3-report.md](docs/phase3-report.md)
 for dictation, [docs/phase2-report.md](docs/phase2-report.md) for the meeting app,
 [docs/phase1-report.md](docs/phase1-report.md) for pipeline measurements and

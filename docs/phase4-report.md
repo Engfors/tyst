@@ -1,7 +1,7 @@
 # Phase 4 report: Arch Linux / KDE Wayland port
 
-- **Status:** Built; waiting for the owner's acceptance run on Arch Linux / KDE Plasma (Wayland).
-  ADR 0005 is Proposed until then.
+- **Status:** Accepted on Arch Linux / KDE Plasma (Wayland) by the owner on 2026-10-04 (section 4).
+  ADR 0005 is Proposed until the owner confirms it.
 - **Code:** `crates/tyst-platform/src/appimage.rs` (environment for programs Tyst starts),
   `app/src-tauri/src/{appimage,autostart}.rs`, AppImage handling in `shortcuts.rs`, `commands.rs`,
   `kwin.rs` and `main.rs`; `packaging/linux/`; the `appimage` job in `.github/workflows/ci.yml`.
@@ -99,6 +99,26 @@ Not testable here: KDE (tray, portals, KWin), NVIDIA, real calls.
 SPEC 12: Phases 2–3 acceptance scenarios pass on Arch/KDE Wayland (Teams/Meet/Zoom in browser or
 native clients); the AppImage runs from `~/.local/share/AppImage/`. Steps for the owner's machine are
 in the project's shared files (`phase4/arch-test-steps.md`, outside the repo, like earlier phases).
+
+Owner's run from the CI AppImage in `~/.local/share/AppImage/` (Arch Linux, Ryzen 7 7800X3D, RTX 4090,
+PipeWire, KDE Plasma 6 on Wayland), 2026-10-04:
+
+| step | result |
+|---|---|
+| First start: tray, shortcuts, login and desktop entries point at the AppImage | pass |
+| KDE shortcut settings show Tyst's icon | failed, then fixed: Tyst runs `kbuildsycoca6` (section 2) |
+| A. Teams call: no focus stealing, drag, pause, compact, name, open from the toast | pass |
+| B. Google Meet and Zoom calls | skipped by the owner; YouTube in Swedish and English transcribed as expected |
+| C. Headset unplug | pass |
+| D. `kill -9` → recovery prompt | pass |
+| E. Window position after a restart | failed (opened centred), then fixed with the KWin script (section 2); re-test passed |
+| F. Dictation (five apps, å ä ö, latency, clipboard, hold/tap, Esc/Tab, direct mode, during a meeting) | pass |
+| G. Launch at login | pass |
+| H. AppImage moved to a folder with a space | pass |
+
+The app log showed models loaded in 1.1 s and a 10-minute meeting of 49 passages saved; the only
+other lines are GTK messages about two KDE GTK modules (`colorreload-gtk-module`,
+`window-decorations-gtk-module`) that the AppImage's GTK does not ship, which are harmless.
 
 ## 5. Known limits
 
