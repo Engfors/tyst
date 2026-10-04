@@ -1,7 +1,7 @@
 # Phase 5 report: polish and release
 
-- **Status:** Built; waiting for the owner's acceptance on Arch Linux / KDE Plasma (Wayland). macOS
-  items compile and are checked in CI, and wait for the owner's Mac.
+- **Status:** Accepted on Arch Linux / KDE Plasma (Wayland) by the owner on 2026-10-04 (section 8).
+  macOS items compile and are checked in CI, and wait for the owner's Mac.
 - **Code:** `crates/tyst-runtime/src/{echo,update,meeting}.rs`, `crates/tyst-platform/src/mic_watch.rs`,
   `crates/tyst-cli/src/echo_cmd.rs`, `app/src-tauri/src/{detect,secrets,updates}.rs` and the
   Settings, pill and onboarding pages; `.github/workflows/{ci,release}.yml`, `packaging/`,
@@ -105,3 +105,11 @@ only when the user asks.
 - macOS: the "only meeting apps" system-audio filter (SPEC 15 q7), and an owner test of echo
   cancellation, detection and the DMG.
 - The first real release needs the `RELEASE_GPG_KEY` and `RELEASE_GPG_PASSPHRASE` secrets.
+
+## 8. Owner acceptance (Arch, 2026-10-04)
+
+All runs in `/mnt/project-files/phase5/arch-test-steps.md` passed: the build and smoke test, the paste
+token moving into KWallet, echo cancellation in the app with a video on speakers and from the CLI,
+every meeting detection step, idle unloading, the update check with and without a token, the About
+page and notices, the signing key setup and a signed release dry run. A real Teams call on speakers
+(run 3B) was not tested. The update-available notice (run 8C) waits for the first published release.
