@@ -3,7 +3,8 @@ name: Release
 # A tag `vX.Y.Z` builds the Linux AppImage and the macOS app, checksums and signs them and opens
 # a draft GitHub release with them (SPEC 12, Phase 5). Publishing the draft is a manual step, and
 # the update check (SPEC 9.7) only sees published releases.
-# Running the workflow by hand builds and signs everything as a dry run, without a release.
+# Running the workflow by hand, or a pull request that changes the release workflow or the
+# packaging scripts, builds and signs everything as a dry run, without a release.
 #
 # Secrets: RELEASE_GPG_KEY (ASCII-armoured private key) and RELEASE_GPG_PASSPHRASE. A tag
 # without them fails; a dry run without them builds unsigned.
@@ -12,6 +13,10 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - packaging/**
 
 permissions:
   contents: read
