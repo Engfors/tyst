@@ -1,0 +1,182 @@
+name: Release
+
+# A tag `vX.Y.Z` builds the Linux AppImage and the macOS app, checksums and signs them and opens
+# a draft GitHub release with them (SPEC 12, Phase 5). Publishing the draft is a manual step, and
+# the update check (SPEC 9.7) only sees published releases.
+# Running the workflow by hand builds and signs everything as a dry run, without a release.
+#
+# Secrets: RELEASE_GPG_KEY (ASCII-armoured private key) and RELEASE_GPG_PASSPHRASE. A tag
+# without them fails; a dry run without them builds unsigned.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Release binaries carry no debug info (issue #14, PR7-006).
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_STRIP: debuginfo
+
+jobs:
+  version:
+    name: Check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: v
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          [ -n "$version" ] || { echo "no workspace version in Cargo.toml"; exit 1; }
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "v$version" ]; then
+            echo "tag $REF_NAME does not match the workspace version $version"
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+  linux:
+    name: AppImage (Linux)
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install build deps
+        run: >
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libasound2-dev libpipewire-0.3-dev libspa-0.2-dev clang g++ meson ninja-build
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev file zsync
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - run: npm ci --prefix app/ui
+      - name: Fetch pinned AppImage tools
+        run: packaging/linux/fetch-tools.sh
+      - name: Bundle
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: npm run --prefix app/ui tauri build -- --bundles appimage
+      - name: Import the signing key
+        id: gpg
+        env:
+          KEY: ${{ secrets.RELEASE_GPG_KEY }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: packaging/import-gpg-key.sh
+      - name: Repack with update information and signature
+        env:
+          APPIMAGETOOL_SIGN_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          KEY_ID: ${{ steps.gpg.outputs.key }}
+        run: >
+          packaging/linux/finish-appimage.sh target/release/bundle/appimage/*.AppImage
+          --update-info "gh-releases-zsync|Engfors|tyst|latest|Tyst_*_amd64.AppImage.zsync"
+          ${KEY_ID:+--sign "$KEY_ID"}
+      - name: Smoke test the image
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: packaging/linux/smoke-test-appimage.sh target/release/bundle/appimage/*.AppImage
+      - name: Check that programs Tyst starts get the host environment
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: packaging/linux/check-appimage-env.sh target/release/bundle/appimage/*.AppImage
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-linux
+          path: |
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/appimage/*.AppImage.zsync
+          if-no-files-found: error
+          compression-level: 0
+
+  macos:
+    name: App and DMG (macOS)
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: brew install meson ninja
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - run: npm ci --prefix app/ui
+      # Ad-hoc signed: no Apple Developer ID yet (SPEC 10.1), so Gatekeeper asks on first start.
+      - name: Bundle
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+        run: npm run --prefix app/ui tauri build -- --bundles app,dmg
+      - name: Check the app
+        run: |
+          app=target/release/bundle/macos/Tyst.app
+          codesign --verify --deep --strict "$app"
+          if find "$app" -iname '*.onnx' | grep -q .; then echo "model files in the app"; exit 1; fi
+          ls -l target/release/bundle/dmg/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-macos
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: Checksums, signature and draft release
+    needs: [version, linux, macos]
+    runs-on: ubuntu-latest
+    # The only job that can write to the repository (issue #14, PR7-003).
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum -- * >SHA256SUMS
+          cat SHA256SUMS
+      - name: Import the signing key
+        id: gpg
+        env:
+          KEY: ${{ secrets.RELEASE_GPG_KEY }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: packaging/import-gpg-key.sh
+      - name: Sign the checksums
+        if: steps.gpg.outputs.key != ''
+        working-directory: dist
+        env:
+          PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          KEY_ID: ${{ steps.gpg.outputs.key }}
+        run: |
+          printf '%s' "$PASSPHRASE" | gpg --batch --pinentry-mode loopback --passphrase-fd 0 \
+            --local-user "$KEY_ID" --armor --detach-sign --output SHA256SUMS.asc SHA256SUMS
+          gpg --armor --export "$KEY_ID" >tyst-release-key.asc
+          gpg --verify SHA256SUMS.asc SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release
+          path: dist/*
+          compression-level: 0
+      - name: Draft the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: >
+          gh release create "$TAG" dist/* --draft --verify-tag
+          --title "Tyst $VERSION" --generate-notes

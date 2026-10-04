@@ -5,16 +5,21 @@ on:
     branches: [main]
   pull_request:
 
+# Jobs only read the repository; the release workflow is the one place with write access.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
+# Actions are pinned to commit SHAs (issue #14, CI-001); the comment names the tag.
 jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: rustfmt
       - run: cargo fmt --all --check
@@ -27,14 +32,18 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - name: Install Linux build deps (ALSA, PipeWire, WebKitGTK and tray for the app)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # meson and ninja build WebRTC's echo canceller (webrtc-audio-processing, bundled).
+      - name: Install Linux build deps (ALSA, PipeWire, WebKitGTK and tray for the app, meson)
         if: runner.os == 'Linux'
         run: >
           sudo apt-get update && sudo apt-get install -y --no-install-recommends
-          libasound2-dev libpipewire-0.3-dev libspa-0.2-dev clang g++
+          libasound2-dev libpipewire-0.3-dev libspa-0.2-dev clang g++ meson ninja-build
           libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
-      - uses: actions/setup-node@v7
+      - name: Install macOS build deps (meson)
+        if: runner.os == 'macOS'
+        run: brew install meson ninja
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -42,42 +51,81 @@ jobs:
       # The app embeds the built UI, so it must exist before clippy and tests compile the app.
       - name: Build the UI
         run: npm ci --prefix app/ui && npm run --prefix app/ui check && npm run --prefix app/ui build
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       # Model-dependent tests skip themselves: models are not downloaded in CI.
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2
+        with:
+          tool: cargo-audit
+      # Ignored advisories and the reasons are in .cargo/audit.toml.
+      - run: cargo audit
+
+  eval:
+    name: eval harness tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Run the eval Python tests
+        run: |
+          if [ -d eval/tests ]; then
+            cd eval && python3 -m unittest discover -s tests
+          else
+            echo "no eval tests yet"
+          fi
 
   appimage:
     name: AppImage (Linux)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install build deps
         run: >
           sudo apt-get update && sudo apt-get install -y --no-install-recommends
-          libasound2-dev libpipewire-0.3-dev libspa-0.2-dev clang g++
+          libasound2-dev libpipewire-0.3-dev libspa-0.2-dev clang g++ meson ninja-build
           libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev file
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/ui/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: npm ci --prefix app/ui
+      # The bundler would otherwise download its tools unpinned (issue #14, PR7-003).
+      - name: Fetch pinned AppImage tools
+        run: packaging/linux/fetch-tools.sh
       # linuxdeploy is itself an AppImage; runners have no FUSE 2, so it unpacks itself instead.
+      # The binary is built without debug info, so linuxdeploy never copies it (PR7-006).
       - name: Bundle
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          CARGO_PROFILE_RELEASE_DEBUG: "0"
+          CARGO_PROFILE_RELEASE_STRIP: debuginfo
         run: npm run --prefix app/ui tauri build -- --bundles appimage
+      - name: Repack without group and world write bits
+        run: packaging/linux/finish-appimage.sh target/release/bundle/appimage/*.AppImage
+      - name: Smoke test the image
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: packaging/linux/smoke-test-appimage.sh target/release/bundle/appimage/*.AppImage
       - name: Check that programs Tyst starts get the host environment
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: packaging/linux/check-appimage-env.sh target/release/bundle/appimage/*.AppImage
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: tyst-appimage
           path: target/release/bundle/appimage/*.AppImage
