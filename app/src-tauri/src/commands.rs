@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::DialogExt;
@@ -12,7 +12,7 @@ use tauri_plugin_opener::OpenerExt;
 use tyst_core::models::{FileStatus, Manifest, PARAKEET};
 use tyst_core::router::LanguageMode;
 use tyst_core::transcript::Channel;
-use tyst_core::vocabulary::{VocabularyFile, VocabularyRules};
+use tyst_core::vocabulary::{Replacement, VocabularyFile, VocabularyRules};
 use tyst_runtime::fetch::{self, DEFAULT_MODELS, Progress};
 
 use crate::config::{self, Config};
@@ -293,21 +293,48 @@ pub fn models_installed(app: AppHandle) -> bool {
     fetch::installed(&DEFAULT_MODELS, &app.state::<AppState>().config().models_dir())
 }
 
-#[tauri::command]
-pub fn vocabulary_get() -> VocabularyFile {
-    config::load_vocabulary()
+/// The vocabulary as the UI sees it. `VocabularyFile` names its list `replacement` so the TOML reads
+/// as `[[replacement]]` tables; over IPC that name would not match the UI's `replacements`, and serde
+/// would silently drop the rules.
+#[derive(Serialize, Deserialize)]
+pub struct VocabularyDto {
+    #[serde(default)]
+    terms: Vec<String>,
+    #[serde(default)]
+    replacements: Vec<Replacement>,
+}
+
+impl From<VocabularyFile> for VocabularyDto {
+    fn from(v: VocabularyFile) -> Self {
+        Self { terms: v.terms, replacements: v.replacements }
+    }
+}
+
+impl From<VocabularyDto> for VocabularyFile {
+    fn from(v: VocabularyDto) -> Self {
+        Self { terms: v.terms, replacements: v.replacements }
+    }
 }
 
 #[tauri::command]
-pub fn vocabulary_set(app: AppHandle, vocabulary: VocabularyFile) -> CmdResult {
-    config::save_vocabulary(&vocabulary)?;
-    app.state::<AppState>().set_vocabulary(VocabularyRules::new(&vocabulary));
+pub fn vocabulary_get() -> VocabularyDto {
+    config::load_vocabulary().into()
+}
+
+#[tauri::command]
+pub fn vocabulary_set(app: AppHandle, vocabulary: VocabularyDto) -> CmdResult {
+    save_vocabulary(&app, &vocabulary.into())
+}
+
+fn save_vocabulary(app: &AppHandle, vocabulary: &VocabularyFile) -> CmdResult {
+    config::save_vocabulary(vocabulary)?;
+    app.state::<AppState>().set_vocabulary(VocabularyRules::new(vocabulary));
     Ok(())
 }
 
 /// Imports a vocabulary TOML file chosen by the user, replacing the current lists.
 #[tauri::command]
-pub async fn vocabulary_import(app: AppHandle) -> CmdResult<Option<VocabularyFile>> {
+pub async fn vocabulary_import(app: AppHandle) -> CmdResult<Option<VocabularyDto>> {
     let (tx, rx) = std::sync::mpsc::channel();
     app.dialog().file().add_filter("Vocabulary", &["toml"]).pick_file(move |p| {
         let _ = tx.send(p);
@@ -320,8 +347,8 @@ pub async fn vocabulary_import(app: AppHandle) -> CmdResult<Option<VocabularyFil
         return Ok(None);
     };
     let file = tyst_core::vocabulary::load_file(&path).map_err(|e| e.to_string())?;
-    vocabulary_set(app, file.clone())?;
-    Ok(Some(file))
+    save_vocabulary(&app, &file)?;
+    Ok(Some(file.into()))
 }
 
 #[tauri::command]
@@ -384,4 +411,19 @@ pub fn install_window_rule() -> CmdResult {
     return crate::kwin::install_rule();
     #[allow(unreachable_code)]
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vocabulary_keeps_replacements_over_ipc() {
+        // The shape `Vocabulary.svelte` sends and expects back.
+        let json = r#"{"terms":["HashiCorp"],"replacements":[{"from":"hashi corp","to":"HashiCorp"}]}"#;
+        let file: VocabularyFile = serde_json::from_str::<VocabularyDto>(json).unwrap().into();
+        assert_eq!(file.replacements, vec![Replacement { from: "hashi corp".into(), to: "HashiCorp".into() }]);
+        let back = serde_json::to_string(&VocabularyDto::from(file)).unwrap();
+        assert_eq!(back, json);
+    }
 }
