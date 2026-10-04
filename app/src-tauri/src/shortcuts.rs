@@ -51,15 +51,7 @@ fn on_meeting_shortcut(app: &AppHandle) {
     let app = app.clone();
     // Not on the shortcut task: starting and stopping take locks and may block briefly.
     std::thread::spawn(move || {
-        let r = match app.state::<AppState>().phase() {
-            state::Phase::Recording | state::Phase::Paused => {
-                state::stop_meeting_in_background(&app);
-                Ok(())
-            }
-            state::Phase::Starting => Ok(()),
-            _ => state::start_meeting(&app),
-        };
-        if let Err(e) = r {
+        if let Err(e) = state::toggle_meeting(&app) {
             crate::notify_error(&app, &e);
         }
     });

@@ -2,7 +2,7 @@
 //! `<transcripts>/.tyst-journal/<session-id>.jsonl` as they arrive. An orphaned journal on the
 //! next launch can be turned back into a Markdown file; the journal is deleted after a save.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
@@ -33,9 +33,10 @@ impl Journal {
     /// Starts a journal for a new session.
     pub fn create(transcripts_dir: &Path, info: &SessionInfo) -> Result<Self> {
         let dir = transcripts_dir.join(JOURNAL_DIR);
-        std::fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
+        crate::private_fs::create_dir_all(transcripts_dir)?;
+        crate::private_fs::create_own_dir(&dir)?;
         let path = dir.join(format!("{}.jsonl", info.id));
-        let file = OpenOptions::new().create_new(true).append(true).open(&path).map_err(|e| Error::io(&path, e))?;
+        let file = crate::private_fs::create_new(&path).map_err(|e| Error::io(&path, e))?;
         let mut j = Self { path, file };
         j.write(&Record::Session(info.clone()))?;
         Ok(j)
@@ -129,6 +130,7 @@ pub fn recover(path: &Path) -> Result<Session> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::OpenOptions;
     use std::time::Duration;
 
     use super::*;

@@ -1,11 +1,10 @@
 //! Markdown output (SPEC 7).
 
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::Result;
+use crate::private_fs;
 use crate::transcript::{Channel, MarkerKind, Session};
-use crate::{Error, Result};
 
 const DEFAULT_TITLE: &str = "Meeting";
 const MAX_TITLE_CHARS: usize = 100;
@@ -54,20 +53,15 @@ fn file_stem(session: &Session) -> String {
 /// Writes the transcript into `dir` as `YYYY-MM-DD HHmm <title>.md`, never overwriting an
 /// existing file. Returns the path written.
 pub fn save(session: &Session, dir: &Path) -> Result<PathBuf> {
-    std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+    private_fs::create_dir_all(dir)?;
     let body = render(session);
     let stem = file_stem(session);
     for n in 1.. {
         let name = if n == 1 { format!("{stem}.md") } else { format!("{stem} ({n}).md") };
         let path = dir.join(name);
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut f) => {
-                f.write_all(body.as_bytes()).map_err(|e| Error::io(&path, e))?;
-                f.sync_all().map_err(|e| Error::io(&path, e))?;
-                return Ok(path);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(Error::io(&path, e)),
+        // Written to a private `.part` file first, so a full disk leaves no half transcript.
+        if private_fs::write_new(&path, body.as_bytes())? {
+            return Ok(path);
         }
     }
     unreachable!()

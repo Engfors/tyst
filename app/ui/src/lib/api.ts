@@ -5,7 +5,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 export type Channel = "me" | "others";
 export type Lang = "sv" | "en";
 export type LanguageMode = "auto" | "sv" | "en";
-export type Phase = "idle" | "starting" | "recording" | "paused" | "naming";
+export type Phase = "idle" | "starting" | "recording" | "paused" | "stopping" | "naming";
 
 export interface Segment {
   id: number;

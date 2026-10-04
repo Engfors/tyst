@@ -116,8 +116,11 @@ pub struct ConfigView {
 
 #[tauri::command]
 pub fn config_get(app: AppHandle) -> ConfigView {
+    let mut config = app.state::<AppState>().config();
+    // The paste consent token never goes to a webview; `dictation_info` says whether one exists.
+    config.dictation.keyboard_token = None;
     ConfigView {
-        config: app.state::<AppState>().config(),
+        config,
         config_dir: config::config_dir().display().to_string(),
         default_transcripts_dir: config::default_transcripts_dir().display().to_string(),
         default_models_dir: tyst_core::models::default_models_dir().display().to_string(),

@@ -5,6 +5,7 @@
 //! travels to the meeting window and the Markdown file; logs carry states, timings and errors.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -20,6 +21,7 @@ use tyst_runtime::meeting::{Meeting, MeetingEvent, MeetingOptions, StoppedMeetin
 use tyst_runtime::{EngineOptions, Runtime};
 
 use crate::config::{self, Config};
+use crate::session::{self, Cancel};
 use crate::{sources, tray, windows};
 
 pub const MEETING_EVENT: &str = "tyst://meeting";
@@ -32,7 +34,9 @@ pub enum Phase {
     Starting,
     Recording,
     Paused,
-    /// Stopped, waiting for a title.
+    /// Capture stopped, the last segments are being decoded.
+    Stopping,
+    /// Stopped, waiting for a title (or being saved).
     Naming,
 }
 
@@ -89,12 +93,7 @@ pub struct Snapshot {
     pub channels: Vec<Channel>,
 }
 
-enum Session {
-    Idle,
-    Starting,
-    Recording(Meeting),
-    Naming { stopped: StoppedMeeting, token: u64 },
-}
+type Session = session::Session<Meeting, StoppedMeeting>;
 
 #[derive(Default)]
 struct Live {
@@ -110,7 +109,8 @@ pub struct AppState {
     runtime: Mutex<Option<Runtime>>,
     session: Mutex<Session>,
     live: Mutex<Live>,
-    naming_token: Mutex<u64>,
+    /// Numbers starts and name prompts, so a stale thread can tell it is no longer wanted.
+    counter: AtomicU64,
 }
 
 pub fn lang_code(mode: LanguageMode) -> &'static str {
@@ -128,7 +128,7 @@ impl AppState {
             runtime: Mutex::new(None),
             session: Mutex::new(Session::Idle),
             live: Mutex::new(Live::default()),
-            naming_token: Mutex::new(0),
+            counter: AtomicU64::new(0),
         }
     }
 
@@ -139,10 +139,11 @@ impl AppState {
     pub fn phase(&self) -> Phase {
         match &*self.session.lock().expect("session lock") {
             Session::Idle => Phase::Idle,
-            Session::Starting => Phase::Starting,
+            Session::Starting { .. } => Phase::Starting,
             Session::Recording(m) if m.is_paused() => Phase::Paused,
             Session::Recording(_) => Phase::Recording,
-            Session::Naming { .. } => Phase::Naming,
+            Session::Stopping => Phase::Stopping,
+            Session::Naming { .. } | Session::Saving => Phase::Naming,
         }
     }
 
@@ -251,6 +252,10 @@ impl AppState {
         }
     }
 
+    fn next_number(&self) -> u64 {
+        self.counter.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
     pub fn emit_state(&self, app: &AppHandle) {
         let _ = app.emit(MEETING_EVENT, UiEvent::State(self.snapshot()));
         tray::refresh(app);
@@ -273,16 +278,16 @@ pub fn start_meeting(app: &AppHandle) -> Result<(), String> {
     if st.phase() == Phase::Naming {
         save_meeting(app, None)?;
     }
-    {
+    let generation = {
         let mut session = st.session.lock().expect("session lock");
-        if !matches!(*session, Session::Idle) {
-            return Ok(());
+        match session.start(st.next_number()) {
+            Some(g) => g,
+            None => return Ok(()),
         }
-        *session = Session::Starting;
-    }
+    };
     let cfg = st.config();
     let Some(dir) = cfg.transcripts_dir.clone() else {
-        *st.session.lock().expect("session lock") = Session::Idle;
+        st.session.lock().expect("session lock").start_failed(generation);
         return Err("Choose a transcripts folder in Settings first.".into());
     };
     *st.live.lock().expect("live lock") = Live::default();
@@ -293,10 +298,16 @@ pub fn start_meeting(app: &AppHandle) -> Result<(), String> {
     let app = app.clone();
     std::thread::spawn(move || {
         let st = app.state::<AppState>();
-        let result = st.ensure_runtime().and_then(|_| begin(&app, &cfg, dir));
+        let result = st.ensure_runtime().and_then(|_| begin(&app, &cfg, dir, generation));
         if let Err(e) = result {
+            let mut session = st.session.lock().expect("session lock");
+            if !session.is_starting(generation) {
+                // Cancelled while loading; nothing to report.
+                return;
+            }
+            session.start_failed(generation);
+            drop(session);
             log::error!("could not start meeting: {e}");
-            *st.session.lock().expect("session lock") = Session::Idle;
             st.live.lock().expect("live lock").warning = Some(e.clone());
             st.emit_state(&app);
             let _ = app.emit(MEETING_EVENT, UiEvent::Warning { message: e });
@@ -305,8 +316,23 @@ pub fn start_meeting(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn begin(app: &AppHandle, cfg: &Config, dir: PathBuf) -> Result<(), String> {
+/// Stop (or quit) while the models are still loading: the start is dropped and nothing records.
+fn cancel_start(app: &AppHandle) -> bool {
     let st = app.state::<AppState>();
+    if st.session.lock().expect("session lock").cancel() == Cancel::Start {
+        log::info!("meeting start cancelled while loading");
+        st.emit_state(app);
+        true
+    } else {
+        false
+    }
+}
+
+fn begin(app: &AppHandle, cfg: &Config, dir: PathBuf, generation: u64) -> Result<(), String> {
+    let st = app.state::<AppState>();
+    if !st.session.lock().expect("session lock").is_starting(generation) {
+        return Ok(());
+    }
     let mut srcs = Vec::new();
     let mic = sources::microphone().ok_or("this build has no microphone support")?;
     srcs.push((Channel::Me, mic));
@@ -334,12 +360,21 @@ fn begin(app: &AppHandle, cfg: &Config, dir: PathBuf) -> Result<(), String> {
         Meeting::start(rt, opts, tx).map_err(|e| e.to_string())?
     };
     {
+        let mut session = st.session.lock().expect("session lock");
+        if let Err(meeting) = session.begin(generation, meeting) {
+            // Stopped while capture was starting: throw this one away, journal included.
+            drop(session);
+            log::info!("meeting start cancelled while capture started");
+            meeting.discard();
+            return Ok(());
+        }
+    }
+    {
         let mut live = st.live.lock().expect("live lock");
         live.started = Some(Instant::now());
         live.channels = channels;
         live.warning = warning.clone();
     }
-    *st.session.lock().expect("session lock") = Session::Recording(meeting);
     if let Some(w) = warning {
         let _ = app.emit(MEETING_EVENT, UiEvent::Warning { message: w });
     }
@@ -444,28 +479,29 @@ pub fn set_language(app: &AppHandle, mode: LanguageMode) {
 /// the timestamp name after `name_prompt_seconds`.
 pub fn stop_meeting(app: &AppHandle) -> Result<(), String> {
     let st = app.state::<AppState>();
-    let meeting = {
-        let mut session = st.session.lock().expect("session lock");
-        match std::mem::replace(&mut *session, Session::Idle) {
-            Session::Recording(m) => m,
-            other => {
-                *session = other;
-                return Ok(());
-            }
+    if cancel_start(app) {
+        return Ok(());
+    }
+    let Some(meeting) = st.session.lock().expect("session lock").stop() else {
+        return Ok(());
+    };
+    // Stopping until the threads have joined: a start in the meantime does nothing.
+    st.emit_state(app);
+    let stopped = match meeting.stop() {
+        Ok(s) => s,
+        Err(e) => {
+            st.session.lock().expect("session lock").stop_failed();
+            st.emit_state(app);
+            return Err(e.to_string());
         }
     };
-    let stopped = meeting.stop().map_err(|e| e.to_string())?;
-    let token = {
-        let mut t = st.naming_token.lock().expect("token lock");
-        *t += 1;
-        *t
-    };
+    let token = st.next_number();
     {
         let mut live = st.live.lock().expect("live lock");
         live.partials.clear();
         live.started = None;
     }
-    *st.session.lock().expect("session lock") = Session::Naming { stopped, token };
+    st.session.lock().expect("session lock").stopped(stopped, token);
     st.emit_state(app);
     windows::show_meeting(app);
     windows::focus_for_typing(app, true);
@@ -476,8 +512,7 @@ pub fn stop_meeting(app: &AppHandle) -> Result<(), String> {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(seconds));
         let st = app.state::<AppState>();
-        let still_waiting =
-            matches!(&*st.session.lock().expect("session lock"), Session::Naming { token: t, .. } if *t == token);
+        let still_waiting = st.session.lock().expect("session lock").naming_token() == Some(token);
         if still_waiting {
             log::info!("name prompt timed out, saving with the timestamp name");
             if let Err(e) = save_meeting(&app, None) {
@@ -486,6 +521,18 @@ pub fn stop_meeting(app: &AppHandle) -> Result<(), String> {
         }
     });
     Ok(())
+}
+
+/// Start, stop, or cancel a start that is still loading (tray, shortcut, `--toggle-meeting`).
+pub fn toggle_meeting(app: &AppHandle) -> Result<(), String> {
+    match app.state::<AppState>().phase() {
+        Phase::Starting | Phase::Recording | Phase::Paused => {
+            stop_meeting_in_background(app);
+            Ok(())
+        }
+        Phase::Stopping => Ok(()),
+        Phase::Idle | Phase::Naming => start_meeting(app),
+    }
 }
 
 /// [`stop_meeting`] off the calling thread (the final decodes take a moment), for the tray and
@@ -511,26 +558,32 @@ pub fn preview_path(app: &AppHandle, title: Option<&str>) -> Option<String> {
 /// Saves the stopped meeting (an empty title uses the timestamp name).
 pub fn save_meeting(app: &AppHandle, title: Option<String>) -> Result<String, String> {
     let st = app.state::<AppState>();
-    let stopped = {
-        let mut session = st.session.lock().expect("session lock");
-        match std::mem::replace(&mut *session, Session::Idle) {
-            Session::Naming { stopped, .. } => stopped,
-            other => {
-                *session = other;
-                return Err("no meeting waiting to be saved".into());
-            }
-        }
+    let Some((stopped, token)) = st.session.lock().expect("session lock").save() else {
+        return Err("no meeting waiting to be saved".into());
     };
     windows::focus_for_typing(app, false);
-    let path = stopped.save(title).map_err(|e| e.to_string())?;
-    let path = path.display().to_string();
-    st.emit_state(app);
-    let _ = app.emit(MEETING_EVENT, UiEvent::Saved { path: path.clone() });
-    Ok(path)
+    match stopped.try_save(title) {
+        Ok(path) => {
+            st.session.lock().expect("session lock").saved();
+            let path = path.display().to_string();
+            st.emit_state(app);
+            let _ = app.emit(MEETING_EVENT, UiEvent::Saved { path: path.clone() });
+            Ok(path)
+        }
+        Err(failed) => {
+            let (stopped, e) = *failed;
+            // Keep the meeting so the user can try again (another folder, after freeing space).
+            st.session.lock().expect("session lock").save_failed(stopped, token);
+            st.emit_state(app);
+            windows::focus_for_typing(app, true);
+            Err(e.to_string())
+        }
+    }
 }
 
 /// On quit: stop and save whatever is running under the timestamp name.
 pub fn shutdown(app: &AppHandle) {
+    cancel_start(app);
     let phase = app.state::<AppState>().phase();
     if matches!(phase, Phase::Recording | Phase::Paused) && stop_meeting(app).is_err() {
         return;

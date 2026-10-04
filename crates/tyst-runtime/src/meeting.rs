@@ -306,6 +306,12 @@ impl Meeting {
         }
     }
 
+    /// Stops capture and throws the meeting away, journal included (a start that was cancelled).
+    pub fn discard(mut self) {
+        self.abort();
+        log::info!("meeting {} discarded", self.info.id);
+    }
+
     /// Start failed: stop what runs and delete the empty journal.
     fn abort(&mut self) {
         self.join();
@@ -343,15 +349,28 @@ impl StoppedMeeting {
     }
 
     /// Writes the Markdown file (never overwriting) and deletes the journal.
-    pub fn save(mut self, title: Option<String>) -> Result<PathBuf> {
+    pub fn save(self, title: Option<String>) -> Result<PathBuf> {
+        self.try_save(title).map_err(|f| f.1)
+    }
+
+    /// [`Self::save`] that hands the meeting back when writing fails, so it can be saved again.
+    pub fn try_save(mut self, title: Option<String>) -> std::result::Result<PathBuf, Box<(Self, crate::Error)>> {
         let title = title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-        if let (Some(j), Some(t)) = (self.journal.as_mut(), title.as_deref()) {
-            j.set_title(t)?;
+        if let (Some(j), Some(t)) = (self.journal.as_mut(), title.as_deref())
+            && let Err(e) = j.set_title(t)
+        {
+            return Err(Box::new((self, e.into())));
         }
         self.session.title = title;
-        let path = markdown::save(&self.session, &self.transcripts_dir)?;
-        if let Some(j) = self.journal.take() {
-            j.remove()?;
+        let path = match markdown::save(&self.session, &self.transcripts_dir) {
+            Ok(p) => p,
+            Err(e) => return Err(Box::new((self, e.into()))),
+        };
+        if let Some(j) = self.journal.take()
+            && let Err(e) = j.remove()
+        {
+            // The transcript is saved; a leftover journal would only offer a duplicate recovery.
+            log::error!("meeting {}: removing the journal failed: {e}", self.session.info.id);
         }
         log::info!("meeting {} saved", self.session.info.id);
         Ok(path)

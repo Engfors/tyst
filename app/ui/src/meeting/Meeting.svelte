@@ -243,13 +243,13 @@
         <span class="dot rec" title="Recording"></span>
       {:else if phase === "paused"}
         <span class="dot paused" title="Paused"></span>
-      {:else if phase === "starting"}
-        <span class="dot starting" title="Starting"></span>
+      {:else if phase === "starting" || phase === "stopping"}
+        <span class="dot starting" title={phase === "starting" ? "Starting" : "Stopping"}></span>
       {:else}
         <span class="dot idle"></span>
       {/if}
       <span class="time mono" data-tauri-drag-region>
-        {#if phase === "starting"}Loading…{:else if recording}{formatElapsed(elapsed)}{:else if phase === "naming"}Stopped{:else}Tyst{/if}
+        {#if phase === "starting"}Loading…{:else if phase === "stopping"}Stopping…{:else if recording}{formatElapsed(elapsed)}{:else if phase === "naming"}Stopped{:else}Tyst{/if}
       </span>
     </div>
 
@@ -283,6 +283,10 @@
         <button class="icon stop" title="Stop" onclick={() => api.stop().catch(fail)}>
           <svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.5" /></svg>
         </button>
+      {:else if phase === "starting"}
+        <button class="icon stop" title="Cancel" onclick={() => api.stop().catch(fail)}>
+          <svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.5" /></svg>
+        </button>
       {:else if phase === "idle"}
         <button class="icon start" title="Start meeting transcription" onclick={() => api.start().catch(fail)}>
           <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5" /></svg>
@@ -313,6 +317,7 @@
       {:else}
         <p class="empty muted">
           {#if phase === "starting"}Loading models…
+          {:else if phase === "stopping"}Finishing the transcript…
           {:else if recording}Listening…
           {:else if phase === "idle"}Start a meeting from here or the tray icon.
           {/if}

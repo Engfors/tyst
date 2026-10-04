@@ -231,15 +231,14 @@ pub fn save_vocabulary(v: &VocabularyFile) -> Result<(), String> {
     write_toml(&vocabulary_path(), v)
 }
 
-/// Writes atomically (temp file + rename) so a crash never leaves half a file.
+/// Writes atomically (temp file + rename) so a crash never leaves half a file; the file is
+/// `0600` in a `0700` folder.
 pub fn write_toml<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let text = toml::to_string_pretty(value).map_err(|e| e.to_string())?;
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        tyst_core::private_fs::create_own_dir(dir).map_err(|e| e.to_string())?;
     }
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+    tyst_core::private_fs::write_replace(path, text.as_bytes()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
