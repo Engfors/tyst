@@ -49,3 +49,33 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       # Model-dependent tests skip themselves: models are not downloaded in CI.
+
+  appimage:
+    name: AppImage (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: >
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libasound2-dev libpipewire-0.3-dev libspa-0.2-dev clang
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev file
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci --prefix app/ui
+      # linuxdeploy is itself an AppImage; runners have no FUSE 2, so it unpacks itself instead.
+      - name: Bundle
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: npm run --prefix app/ui tauri build -- --bundles appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tyst-appimage
+          path: target/release/bundle/appimage/*.AppImage
+          retention-days: 14
+          compression-level: 0
