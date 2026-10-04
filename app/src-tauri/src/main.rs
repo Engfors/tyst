@@ -196,6 +196,10 @@ fn offer_recovery(app: &AppHandle) {
             Ok(s) => s,
             Err(e) => {
                 log::error!("unreadable journal {}: {e}", path.display());
+                match journal::set_aside(&path) {
+                    Ok(bad) => log::warn!("journal kept as {}", bad.display()),
+                    Err(e) => log::error!("could not set the journal aside: {e}"),
+                }
                 continue;
             }
         };

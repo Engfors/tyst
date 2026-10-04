@@ -33,7 +33,9 @@ pub fn render(session: &Session) -> String {
 
     for block in blocks(session) {
         match block {
-            Block::Turn(channel, text) => out.push_str(&format!("\n**{}:** {}\n", info.labels.get(channel), text)),
+            Block::Turn(channel, text) => {
+                out.push_str(&format!("\n**{}:** {}\n", one_line(info.labels.get(channel)), text))
+            }
             Block::Marker(MarkerKind::Paused) => out.push_str("\n*Paused*\n"),
             Block::Marker(MarkerKind::Dictating) => out.push_str("\n*(dictating…)*\n"),
         }
@@ -111,7 +113,13 @@ fn push_marker(out: &mut Vec<Block>, kind: MarkerKind) {
 
 fn display_title(session: &Session) -> String {
     let t = session.title.as_deref().map(str::trim).unwrap_or("");
-    if t.is_empty() { DEFAULT_TITLE.to_string() } else { t.chars().filter(|c| !c.is_control()).collect() }
+    if t.is_empty() { DEFAULT_TITLE.to_string() } else { one_line(t) }
+}
+
+/// Without control characters and Unicode line/paragraph separators, which would end a YAML
+/// value or a Markdown line early.
+fn one_line(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control() && !matches!(c, '\u{2028}' | '\u{2029}')).collect()
 }
 
 /// Makes a title safe as a file name on macOS and Linux (and harmless on Windows shares).
@@ -234,6 +242,16 @@ models: [pianissimo-sv-int8@63730c6]\n\
 \n\
 **Me:** Sure, no problem.\n";
         assert_eq!(md, expected);
+    }
+
+    #[test]
+    fn titles_and_labels_stay_on_one_line() {
+        let mut s = session(Some("Q3\u{2028}title: x\u{2029}y"));
+        s.info.labels = SpeakerLabels { me: "Me\nInjected".into(), others: "Others".into() };
+        let md = render(&s);
+        assert!(!md.contains('\u{2028}') && !md.contains('\u{2029}'));
+        assert!(md.contains("Q3title: xy"));
+        assert!(!md.contains("Me\nInjected"));
     }
 
     #[test]

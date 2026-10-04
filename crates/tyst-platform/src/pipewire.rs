@@ -84,6 +84,16 @@ impl PipeWireSource {
             }
             Err(_) => {
                 let _ = quit_tx.send(());
+                // Wait for the stream thread to end rather than leaving it behind with the sink.
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                while !thread.is_finished() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                if thread.is_finished() {
+                    let _ = thread.join();
+                } else {
+                    log::error!("{channel:?}: PipeWire stream thread did not stop within 5 s; leaving it");
+                }
                 Err(CaptureError::Device("pipewire: no answer from the PipeWire daemon".into()))
             }
         }

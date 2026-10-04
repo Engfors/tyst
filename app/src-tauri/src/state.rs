@@ -597,6 +597,10 @@ pub fn shutdown(app: &AppHandle) {
 /// transcript of what was heard.
 pub fn audio_test(app: &AppHandle, channel: Channel, seconds: f32) -> Result<(f32, String), String> {
     let st = app.state::<AppState>();
+    // A second capture of the same device would compete with a running meeting.
+    if st.phase() != Phase::Idle {
+        return Err("Stop the meeting first; the test uses the same microphone.".into());
+    }
     st.ensure_runtime()?;
     let factory = sources::source(channel).ok_or("not available on this platform")?;
     let mut source = factory().map_err(|e| e.to_string())?;

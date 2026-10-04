@@ -36,9 +36,9 @@ tauri-plugin-global-shortcut = "2"
 
 [features]
 default = ["mic", "pipewire", "macos-tap"]
-mic = ["tyst-platform/mic"]
-pipewire = ["tyst-platform/pipewire"]
+mic = ["tyst-platform/mic", "tyst-runtime/mic"]
+pipewire = ["tyst-platform/pipewire", "tyst-runtime/pipewire"]
 # macOS only (ignored elsewhere): system audio through a Core Audio process tap.
-macos-tap = ["tyst-platform/macos-tap"]
+macos-tap = ["tyst-platform/macos-tap", "tyst-runtime/macos-tap"]
 # Set by the Tauri CLI for production builds (frontend embedded instead of the dev server).
 custom-protocol = ["tauri/custom-protocol"]

@@ -1,5 +1,6 @@
-//! End-to-end checks with the real models. Skipped unless the models are installed in
-//! `$TYST_MODELS` (see `tyst-cli models fetch`). With `TYST_TEST_CLIP=<audio>` (and a reference
+//! End-to-end checks with the real models, ignored by default so CI reports them as ignored rather
+//! than passed. Run them with the models installed in `$TYST_MODELS` (see `tyst-cli models fetch`):
+//! `TYST_MODELS=... cargo test -p tyst-core --test models -- --ignored`. With `TYST_TEST_CLIP=<audio>` (and a reference
 //! transcript next to it as `<audio stem>.txt`), the clip's WER is checked too.
 
 use std::path::{Path, PathBuf};
@@ -26,6 +27,7 @@ fn engine() -> Option<OnnxTdtEngine> {
 }
 
 #[test]
+#[ignore = "needs the real models in $TYST_MODELS"]
 fn silence_decodes_to_nothing() {
     let Some(mut e) = engine() else {
         eprintln!("skipped: models not installed");
@@ -36,6 +38,7 @@ fn silence_decodes_to_nothing() {
 }
 
 #[test]
+#[ignore = "needs the real models in $TYST_MODELS"]
 fn vad_finds_no_speech_in_silence() {
     let Some(dir) = installed(SILERO_VAD) else {
         eprintln!("skipped: models not installed");
@@ -50,6 +53,7 @@ fn vad_finds_no_speech_in_silence() {
 }
 
 #[test]
+#[ignore = "needs the real models in $TYST_MODELS"]
 fn clip_from_env_transcribes() {
     let Some(clip) = std::env::var_os("TYST_TEST_CLIP").map(PathBuf::from) else {
         eprintln!("skipped: TYST_TEST_CLIP not set");
@@ -66,6 +70,7 @@ fn clip_from_env_transcribes() {
 
 /// The banded encoder that `models fetch` derives must transcribe exactly like the downloaded one.
 #[test]
+#[ignore = "needs the real models in $TYST_MODELS"]
 fn banded_encoder_matches_the_original() {
     let Some(dir) = installed(PIANISSIMO) else {
         eprintln!("skipped: models not installed");

@@ -94,6 +94,16 @@ pub fn find_orphans(transcripts_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
+/// Renames a journal that can't be read to `<id>.jsonl.bad`, so it is offered once, not on
+/// every launch, and stays on disk for a manual look.
+pub fn set_aside(path: &Path) -> Result<PathBuf> {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".bad");
+    let bad = path.with_file_name(name);
+    std::fs::rename(path, &bad).map_err(|e| Error::io(path, e))?;
+    Ok(bad)
+}
+
 /// Reads a journal back into a session. A torn last line (crash mid-write) is ignored. Without an
 /// end record, the end time is the end of the last segment.
 pub fn recover(path: &Path) -> Result<Session> {
@@ -135,6 +145,21 @@ mod tests {
 
     use super::*;
     use crate::transcript::{Channel, Lang, MarkerKind, SegState, SpeakerLabels};
+
+    #[test]
+    fn a_set_aside_journal_is_no_longer_an_orphan() {
+        let d = std::env::temp_dir().join(format!("tyst-journal-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join(JOURNAL_DIR)).unwrap();
+        let path = d.join(JOURNAL_DIR).join("x.jsonl");
+        std::fs::write(&path, "not json\nnot json either\n").unwrap();
+        assert!(recover(&path).is_err());
+        assert_eq!(find_orphans(&d).unwrap(), vec![path.clone()]);
+        let bad = set_aside(&path).unwrap();
+        assert!(bad.ends_with("x.jsonl.bad") && bad.exists());
+        assert!(find_orphans(&d).unwrap().is_empty());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
 
     fn info(id: &str) -> SessionInfo {
         SessionInfo {

@@ -286,6 +286,9 @@ pub fn models_fetch(app: AppHandle, ids: Vec<String>) -> CmdResult {
     let cancel = fs.cancel.clone();
     let dir = app.state::<AppState>().config().models_dir();
     std::thread::spawn(move || {
+        // Clears the running flag however this thread ends, panics included, so a crash in
+        // the download never blocks the next one until a restart.
+        let _running = DownloadRunning(app.clone());
         let ids: Vec<String> =
             if ids.is_empty() { DEFAULT_MODELS.iter().map(|s| s.to_string()).collect() } else { ids };
         let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
@@ -302,7 +305,7 @@ pub fn models_fetch(app: AppHandle, ids: Vec<String>) -> CmdResult {
             };
             emit(ModelsEvent::Progress { file, done, total, note });
         });
-        app.state::<FetchState>().running.store(false, Ordering::SeqCst);
+        drop(_running);
         match result {
             Ok(()) => {
                 emit(ModelsEvent::Done);
@@ -315,6 +318,18 @@ pub fn models_fetch(app: AppHandle, ids: Vec<String>) -> CmdResult {
         }
     });
     Ok(())
+}
+
+struct DownloadRunning(AppHandle);
+
+impl Drop for DownloadRunning {
+    fn drop(&mut self) {
+        self.0.state::<FetchState>().running.store(false, Ordering::SeqCst);
+        if std::thread::panicking() {
+            let _ =
+                self.0.emit(MODELS_EVENT, ModelsEvent::Failed { message: "The download stopped unexpectedly.".into() });
+        }
+    }
 }
 
 #[tauri::command]

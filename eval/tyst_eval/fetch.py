@@ -6,7 +6,6 @@ into the repository.
 
 from __future__ import annotations
 
-import hashlib
 import io
 import random
 import shutil
@@ -17,14 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import ModelSpec, load_manifest, load_models, models_dir
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    return h.hexdigest()
+from .pins import app_pins, check_archive, check_snapshot
 
 
 def _download(url: str, dest: Path) -> None:
@@ -47,10 +39,11 @@ def fetch_model(spec: ModelSpec) -> None:
         dest = root / name
         if not dest.exists():
             _download(spec.url, dest)
-        digest = sha256_file(dest)
-        if spec.sha256 and digest != spec.sha256:
-            raise SystemExit(f"{spec.id}: checksum mismatch for {name}: {digest} != {spec.sha256}")
-        print(f"{spec.id}: sha256 {digest}")
+        problem = check_archive(dest, spec.sha256)
+        if problem:
+            dest.unlink()
+            raise SystemExit(f"{spec.id}: {name}: {problem}")
+        print(f"{spec.id}: sha256 verified")
         if name.endswith((".tar.bz2", ".tar.gz")):
             with tarfile.open(dest) as tar:
                 tar.extractall(root, filter="data")
@@ -64,9 +57,10 @@ def fetch_model(spec: ModelSpec) -> None:
         except ImportError as e:
             raise SystemExit("pip install huggingface_hub to fetch Hugging Face models") from e
         path = snapshot_download(spec.hf_repo, revision=spec.hf_revision, allow_patterns=spec.hf_allow or None, local_dir=target)
-        print(f"{spec.id}: {spec.hf_repo}@{spec.hf_revision} -> {path}")
-        for f in sorted(Path(path).rglob("*.onnx*")):
-            print(f"  {f.name}  sha256 {sha256_file(f)}")
+        problems = check_snapshot(Path(path), app_pins(spec.hf_repo, spec.hf_revision))
+        if problems:
+            raise SystemExit(f"{spec.id}: " + "; ".join(problems))
+        print(f"{spec.id}: {spec.hf_repo}@{spec.hf_revision} -> {path}, checksums verified")
     else:
         raise SystemExit(f"{spec.id}: no download source in models.toml")
 

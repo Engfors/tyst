@@ -108,27 +108,18 @@ pub fn run(args: LiveArgs) -> Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
 
     let (tx, rx) = mpsc::channel::<AudioChunk>();
-    #[cfg(feature = "mic")]
-    let mut mic = None;
+    let mut mic: Option<Box<dyn tyst_platform::AudioSource>> = None;
     let source_name;
     if let Some(path) = &args.simulate {
         let audio = tyst_core::audio_file::decode_mono(path)?;
         source_name = format!("simulate:{} (x{})", path.file_name().unwrap_or_default().to_string_lossy(), args.speed);
         spawn_playback(audio, args.speed, tx, stop.clone());
     } else {
-        #[cfg(feature = "mic")]
-        {
-            use tyst_platform::AudioSource;
-            let mut m = tyst_platform::mic::MicSource::new();
-            m.start(tx)?;
-            source_name = format!("mic:{} @ {} Hz", m.device_name(), m.sample_rate());
-            mic = Some(m);
-        }
-        #[cfg(not(feature = "mic"))]
-        {
-            drop(tx);
-            bail!("built without microphone support (feature `mic`)");
-        }
+        // The same source the app records Me with (PipeWire on Linux).
+        let mut m = crate::meeting::mic_source()?()?;
+        m.start(tx)?;
+        source_name = format!("mic:{} @ {} Hz", m.device_name(), m.sample_rate());
+        mic = Some(m);
     }
     if args.seconds.is_none() && args.simulate.is_none() {
         let stop = stop.clone();
@@ -233,9 +224,7 @@ pub fn run(args: LiveArgs) -> Result<()> {
         let events = pipeline.push(&pcm)?;
         process(events, &clock)?;
     }
-    #[cfg(feature = "mic")]
     if let Some(mut m) = mic.take() {
-        use tyst_platform::AudioSource;
         m.stop()?;
     }
     stop.store(true, Ordering::SeqCst);

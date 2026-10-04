@@ -41,7 +41,11 @@ python3 -m tyst_eval run --categories sv,en,mixed,sv-terms # owner clips only
 python3 -m tyst_eval run --lid whisper-base                # compare LID models
 python3 -m tyst_eval run --provider coreml                 # CoreML execution provider (macOS)
 python3 -m tyst_eval bench                                 # RTF + RSS per model, 1 and 4 threads, plus all models loaded together
+python3 -m unittest discover -s tests                      # harness unit tests (no audio, models or network)
 ```
+
+`fetch-models` refuses a download that does not match its SHA-256: archives against
+`eval/models.toml`, Hugging Face snapshots against the app's `models/models.toml`.
 
 `run` writes `eval/results/<timestamp>/`:
 

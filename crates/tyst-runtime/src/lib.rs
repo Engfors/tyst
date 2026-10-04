@@ -9,6 +9,7 @@ pub mod engine;
 pub mod fetch;
 pub mod meeting;
 pub mod playback;
+pub mod sources;
 
 pub use engine::{EngineOptions, Runtime};
 

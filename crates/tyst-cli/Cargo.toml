@@ -12,11 +12,11 @@ path = "src/main.rs"
 
 [features]
 default = ["mic", "pipewire", "macos-tap"]
-mic = ["tyst-platform/mic"]
+mic = ["tyst-platform/mic", "tyst-runtime/mic"]
 # Linux only (ignored elsewhere): microphone and system audio through PipeWire for `meeting`.
-pipewire = ["tyst-platform/pipewire"]
+pipewire = ["tyst-platform/pipewire", "tyst-runtime/pipewire"]
 # macOS only (ignored elsewhere): system audio through a Core Audio process tap.
-macos-tap = ["tyst-platform/macos-tap"]
+macos-tap = ["tyst-platform/macos-tap", "tyst-runtime/macos-tap"]
 
 [dependencies]
 anyhow.workspace = true

@@ -13,3 +13,9 @@ thiserror.workspace = true
 tyst-core.workspace = true
 tyst-platform.workspace = true
 ureq.workspace = true
+
+[features]
+# Capture backends for `sources` (see tyst-platform).
+mic = ["tyst-platform/mic"]
+pipewire = ["tyst-platform/pipewire"]
+macos-tap = ["tyst-platform/macos-tap"]

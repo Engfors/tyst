@@ -72,6 +72,14 @@ pub fn is_kde() -> bool {
     std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|p| p.eq_ignore_ascii_case("KDE")))
 }
 
+/// Writes a new file only the user can read; fails if the name exists.
+fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
+    f.write_all(text.as_bytes())
+}
+
 /// Quotes a string for JavaScript source.
 fn js(s: &str) -> String {
     serde_json::to_string(s).expect("a string serializes")
@@ -84,7 +92,12 @@ impl KWin {
             .serve_at(OBJECT_PATH, Replies { pending: pending.clone() })?
             .build()
             .await?;
-        let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+        // Scripts go only in the user's private runtime dir: a shared /tmp name could be raced
+        // by another user.
+        let dir = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(std::path::PathBuf::from)
+            .filter(|d| d.is_absolute())
+            .ok_or_else(|| DesktopError::KWin("XDG_RUNTIME_DIR is not set".into()))?;
         Ok(Self { conn, pending, next: AtomicU64::new(1), dir })
     }
 
@@ -184,7 +197,7 @@ impl KWin {
             token = js(&token),
         );
         let file = self.dir.join(format!("tyst-kwin-{token}.js"));
-        std::fs::write(&file, source).map_err(|e| DesktopError::KWin(format!("{}: {e}", file.display())))?;
+        write_private(&file, &source).map_err(|e| DesktopError::KWin(format!("{}: {e}", file.display())))?;
         let (tx, rx) = oneshot::channel();
         self.pending.lock().expect("pending lock").insert(token.clone(), tx);
         let plugin = format!("tyst-{token}");
