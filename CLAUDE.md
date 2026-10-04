@@ -43,6 +43,7 @@ cargo build --release -p tyst-cli
 ./target/release/tyst-cli live --simulate clip.wav        # same, with a file played in real time
 ./target/release/tyst-cli meeting --mic --system          # two-channel meeting, no UI
 (cd app/ui && npm ci && npm run check && npm run tauri build -- --no-bundle)   # app -> target/release/tyst
+(cd app/ui && NO_STRIP=true npm run tauri build -- --bundles appimage)          # Linux AppImage (CI artifact too)
 ./target/release/tyst-cli bench eval/manifest.toml --baseline <harness summary.json>
 ```
 

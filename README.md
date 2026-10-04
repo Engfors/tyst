@@ -3,8 +3,9 @@
 Local, privacy-first meeting transcription and dictation for macOS and Linux. Swedish and English,
 including mixed-language meetings. Nothing leaves the device.
 
-Status: **Phase 2** (meeting app, accepted on Linux first). See [SPEC.md](SPEC.md) for the specification,
-[docs/phase2-report.md](docs/phase2-report.md) for the meeting app,
+Status: **Phase 4** (Linux AppImage). See [SPEC.md](SPEC.md) for the specification,
+[docs/phase4-report.md](docs/phase4-report.md) for the AppImage, [docs/phase3-report.md](docs/phase3-report.md)
+for dictation, [docs/phase2-report.md](docs/phase2-report.md) for the meeting app,
 [docs/phase1-report.md](docs/phase1-report.md) for pipeline measurements and
 [docs/phase0-report.md](docs/phase0-report.md) for the model evaluation.
 
@@ -29,6 +30,18 @@ The app records your microphone (Me) and system audio (Others) as two pipelines,
 meeting window that never takes focus, and saves Markdown when you stop. On Linux it captures through
 PipeWire; building it needs `webkit2gtk-4.1`, `libayatana-appindicator`, `librsvg`, `pipewire` and
 `clang`. `tyst-cli meeting --mic --system` runs the same session without the UI.
+
+### AppImage (Linux)
+
+```sh
+(cd app/ui && npm ci && NO_STRIP=true npm run tauri build -- --bundles appimage)
+install -Dm755 target/release/bundle/appimage/Tyst_*_amd64.AppImage ~/.local/share/AppImage/Tyst.AppImage
+~/.local/share/AppImage/Tyst.AppImage
+```
+
+CI builds the same AppImage on Ubuntu 24.04 (artifact `tyst-appimage`). `NO_STRIP=true` is needed on
+Arch, whose libraries use ELF sections linuxdeploy's `strip` does not know. The AppImage needs
+`fusermount3` (`fuse3`). Models are not bundled.
 
 Models live outside the repo: `~/Library/Application Support/Tyst/models` on macOS,
 `~/.local/share/tyst/models` on Linux, or `$TYST_MODELS`. After downloading, `models fetch` also writes
