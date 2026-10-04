@@ -29,6 +29,8 @@
   let preview = $state<string | null>(null);
   let countdown = $state(0);
   let saving = false;
+  // A failed save, shown in the name prompt: the prompt covers the warning bar.
+  let saveError = $state<string | null>(null);
   let followLatest = $state(true);
   let body: HTMLElement | undefined = $state();
   let titleInput: HTMLInputElement | undefined = $state();
@@ -109,6 +111,7 @@
     preview = snap?.naming?.path_preview ?? null;
     countdown = seconds;
     saving = false;
+    saveError = null;
     await tick();
     titleInput?.focus();
   }
@@ -181,9 +184,11 @@
     saving = true;
     try {
       await api.save(withTitle && title.trim() ? title.trim() : null);
+      saveError = null;
     } catch (e) {
       saving = false;
-      fail(e);
+      saveError = `Could not save: ${errorText(e)}`;
+      titleInput?.focus();
     }
   }
 
@@ -347,6 +352,9 @@
         />
         <button class="primary" type="submit">Save</button>
       </div>
+      {#if saveError}
+        <div class="save-error" role="alert">{saveError}</div>
+      {/if}
       <div class="hint muted">
         <span class="path mono" title={preview ?? ""}>{fileName(preview)}</span>
         <span class="count">Esc: save as is · {countdown}s</span>
@@ -638,6 +646,11 @@
   .naming input {
     flex: 1;
     min-width: 0;
+  }
+
+  .save-error {
+    font-size: 12px;
+    color: var(--warn);
   }
 
   .hint {
