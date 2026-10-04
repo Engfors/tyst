@@ -162,30 +162,48 @@ mod linux {
         });
     }
 
-    /// `~/.local/share/applications/com.engfors.tyst.desktop`: the portal identifies host apps by
-    /// their desktop file, and KDE lists the shortcuts under its name.
+    /// `~/.local/share/applications/com.engfors.tyst.desktop` and its icon: the portal identifies
+    /// host apps by their desktop file, and KDE lists the shortcuts under its name and icon. Written
+    /// on every start, so it follows an AppImage that was moved or replaced.
     fn install_desktop_file() -> Result<(), String> {
-        let exe = std::env::var_os("APPIMAGE")
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::current_exe().ok())
-            .ok_or("no executable path")?;
+        let exe = crate::appimage::launch_path().ok_or("no executable path")?;
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or("no HOME")?;
-        let dir = std::env::var_os("XDG_DATA_HOME")
+        let data = std::env::var_os("XDG_DATA_HOME")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| home.join(".local/share"))
-            .join("applications");
-        let path = dir.join(format!("{APP_ID}.desktop"));
-        let quoted = format!("\"{}\"", exe.display().to_string().replace('"', "\\\""));
+            .unwrap_or_else(|| home.join(".local/share"));
+        let icon = data.join("icons/hicolor/128x128/apps").join(format!("{APP_ID}.png"));
+        let mut changed = write_if_changed(&icon, ICON)?;
+        let exec = crate::appimage::exec_arg(&exe)?;
         let body = format!(
             "[Desktop Entry]\nType=Application\nName=Tyst\nComment=Local meeting transcription and dictation\n\
-             Exec={quoted} %U\nIcon=audio-input-microphone\nTerminal=false\nCategories=Office;AudioVideo;\n\
+             Exec={exec} %U\nIcon={APP_ID}\nTerminal=false\nCategories=Office;\n\
              X-GNOME-UsesNotifications=false\n"
         );
-        if std::fs::read_to_string(&path).is_ok_and(|old| old == body) {
-            return Ok(());
+        changed |= write_if_changed(&data.join("applications").join(format!("{APP_ID}.desktop")), body.as_bytes())?;
+        if changed && tyst_platform::kwin::is_kde() {
+            // KDE's settings read names and icons from its service cache, which does not always
+            // notice a new desktop file or icon on its own.
+            match crate::appimage::host_command("kbuildsycoca6").output() {
+                Ok(o) if o.status.success() => log::info!("KDE service cache refreshed"),
+                Ok(o) => log::warn!("kbuildsycoca6 exited with {}", o.status),
+                Err(e) => log::warn!("kbuildsycoca6: {e}"),
+            }
         }
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        std::fs::write(&path, body).map_err(|e| format!("{}: {e}", path.display()))
+        Ok(())
+    }
+
+    const ICON: &[u8] = include_bytes!("../icons/128x128.png");
+
+    /// Writes `bytes` unless the file already holds them; true if it wrote.
+    fn write_if_changed(path: &std::path::Path, bytes: &[u8]) -> Result<bool, String> {
+        if std::fs::read(path).is_ok_and(|old| old == bytes) {
+            return Ok(false);
+        }
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(true)
     }
 }
 

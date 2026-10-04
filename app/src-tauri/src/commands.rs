@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
@@ -75,7 +76,7 @@ pub fn meeting_window_compact(app: AppHandle, compact: bool) {
 
 #[tauri::command]
 pub fn open_path(app: AppHandle, path: String) -> CmdResult {
-    app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+    open(&app, std::path::Path::new(&path))
 }
 
 #[tauri::command]
@@ -87,7 +88,19 @@ pub fn reveal_path(app: AppHandle, path: String) -> CmdResult {
 pub fn open_transcripts_folder(app: AppHandle) -> CmdResult {
     let dir = app.state::<AppState>().config().transcripts_dir.ok_or("No transcripts folder chosen yet.")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    app.opener().open_path(dir.display().to_string(), None::<&str>).map_err(|e| e.to_string())
+    open(&app, &dir)
+}
+
+/// Opens a file or folder with its default application. On Linux the application gets the host's
+/// environment, not the AppImage's ([`crate::appimage`]).
+fn open(app: &AppHandle, path: &std::path::Path) -> CmdResult {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        crate::appimage::open(path)
+    }
+    #[cfg(not(target_os = "linux"))]
+    app.opener().open_path(path.display().to_string(), None::<&str>).map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -144,8 +157,16 @@ pub fn config_set(app: AppHandle, config: Config) -> CmdResult {
 }
 
 pub fn apply_autostart(app: &AppHandle, on: bool) {
-    let al = app.autolaunch();
-    let r = if on { al.enable() } else { al.disable() };
+    #[cfg(target_os = "linux")]
+    let r = {
+        let _ = app;
+        crate::autostart::set(on)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let r = {
+        let al = app.autolaunch();
+        if on { al.enable() } else { al.disable() }
+    };
     if let Err(e) = r {
         log::warn!("launch at login: {e}");
     }

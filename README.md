@@ -3,8 +3,9 @@
 Local, privacy-first meeting transcription and dictation for macOS and Linux. Swedish and English,
 including mixed-language meetings. Nothing leaves the device.
 
-Status: **Phase 2** (meeting app, accepted on Linux first). See [SPEC.md](SPEC.md) for the specification,
-[docs/phase2-report.md](docs/phase2-report.md) for the meeting app,
+Status: **Phase 4** (Linux AppImage) accepted on Arch. See [SPEC.md](SPEC.md) for the specification,
+[docs/phase4-report.md](docs/phase4-report.md) for the AppImage, [docs/phase3-report.md](docs/phase3-report.md)
+for dictation, [docs/phase2-report.md](docs/phase2-report.md) for the meeting app,
 [docs/phase1-report.md](docs/phase1-report.md) for pipeline measurements and
 [docs/phase0-report.md](docs/phase0-report.md) for the model evaluation.
 
@@ -29,6 +30,27 @@ The app records your microphone (Me) and system audio (Others) as two pipelines,
 meeting window that never takes focus, and saves Markdown when you stop. On Linux it captures through
 PipeWire; building it needs `webkit2gtk-4.1`, `libayatana-appindicator`, `librsvg`, `pipewire` and
 `clang`. `tyst-cli meeting --mic --system` runs the same session without the UI.
+
+### AppImage (Linux)
+
+```sh
+(cd app/ui && npm ci && NO_STRIP=true npm run tauri build -- --bundles appimage)
+install -Dm755 target/release/bundle/appimage/Tyst_*_amd64.AppImage ~/.local/share/AppImage/Tyst.AppImage
+~/.local/share/AppImage/Tyst.AppImage
+```
+
+CI builds the same AppImage on Ubuntu 24.04 as a test build (artifact `tyst-appimage`: unsigned, no
+published checksum; releases come in Phase 5). `NO_STRIP=true` is needed on Arch, whose libraries use
+ELF sections linuxdeploy's `strip` does not know. The AppImage needs glibc 2.39 or newer with a
+matching `libstdc++` (Arch is fine; Ubuntu 22.04 and Debian 12 are too old) and `fusermount3`
+(`fuse3`). Models are not bundled.
+
+### Troubleshooting (Linux)
+
+- **Blank, flickering or crashing windows on NVIDIA.** Tyst already turns off WebKitGTK's DMA-BUF
+  renderer, which fixes the usual "Error 71 (Protocol error)" crash on Wayland. If the windows still
+  render blank or flicker, start it with explicit sync disabled:
+  `__NV_DISABLE_EXPLICIT_SYNC=1 ~/.local/share/AppImage/Tyst.AppImage`.
 
 Models live outside the repo: `~/Library/Application Support/Tyst/models` on macOS,
 `~/.local/share/tyst/models` on Linux, or `$TYST_MODELS`. After downloading, `models fetch` also writes

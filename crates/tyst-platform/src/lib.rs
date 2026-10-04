@@ -5,6 +5,8 @@
 //! integration (feature `desktop`): the clipboard, and on Linux the XDG portals and KWin
 //! scripting, on macOS app activation and the paste keystroke.
 
+#[cfg(target_os = "linux")]
+pub mod appimage;
 #[cfg(feature = "desktop")]
 pub mod clipboard;
 #[cfg(all(target_os = "linux", feature = "desktop"))]

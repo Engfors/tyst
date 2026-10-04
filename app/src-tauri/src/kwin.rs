@@ -4,13 +4,13 @@
 //! Wayland clients cannot keep themselves above other windows, refuse focus or position
 //! themselves, so KWin does it: keep above, skip taskbar/pager/switcher, extreme focus-stealing
 //! prevention (showing the window never takes focus; clicking into the name field still works),
-//! no border, and for the meeting window a remembered position and size. The pill is placed and,
-//! while dictating, activated by a KWin script ([`tyst_platform::kwin`]). The rules are written
+//! no border. KWin scripts ([`tyst_platform::kwin`]) do the rest: they place the pill and, while
+//! dictating, activate it, and they read the meeting window's position when it hides and restore it
+//! when it shows (a "remember position" rule never stored anything for a window that only hides). The rules are written
 //! with `kwriteconfig6` into `kwinrulesrc` under fixed group names, so reinstalling replaces
 //! them, and KWin reloads its config over D-Bus.
 
-use std::process::Command;
-
+use crate::appimage::host_command;
 use crate::windows::{MEETING_TITLE, PILL_TITLE};
 
 const RULE: &str = "tyst-meeting-window";
@@ -19,15 +19,23 @@ const PILL_RULE: &str = "tyst-dictation-pill";
 use tyst_platform::kwin::is_kde;
 
 fn kwriteconfig(group: &str, key: &str, value: &str) -> Result<(), String> {
-    let out = Command::new("kwriteconfig6")
+    let out = host_command("kwriteconfig6")
         .args(["--file", "kwinrulesrc", "--group", group, "--key", key, value])
         .output()
         .map_err(|e| format!("kwriteconfig6: {e}"))?;
     if out.status.success() { Ok(()) } else { Err(format!("kwriteconfig6 exited with {}", out.status)) }
 }
 
+fn kdeleteconfig(group: &str, key: &str) -> Result<(), String> {
+    let out = host_command("kwriteconfig6")
+        .args(["--file", "kwinrulesrc", "--group", group, "--key", key, "--delete"])
+        .output()
+        .map_err(|e| format!("kwriteconfig6: {e}"))?;
+    if out.status.success() { Ok(()) } else { Err(format!("kwriteconfig6 exited with {}", out.status)) }
+}
+
 fn kreadconfig(group: &str, key: &str) -> String {
-    Command::new("kreadconfig6")
+    host_command("kreadconfig6")
         .args(["--file", "kwinrulesrc", "--group", group, "--key", key])
         .output()
         .ok()
@@ -43,7 +51,7 @@ pub fn install_rule() -> Result<(), String> {
     }
     install_meeting_rule()?;
     install_pill_rule()?;
-    let reload = Command::new("dbus-send")
+    let reload = host_command("dbus-send")
         .args(["--session", "--type=method_call", "--dest=org.kde.KWin", "/KWin", "org.kde.KWin.reconfigure"])
         .status();
     if !reload.is_ok_and(|s| s.success()) {
@@ -110,18 +118,14 @@ fn install_meeting_rule() -> Result<(), String> {
         ("fsplevelrule", "2"),
         ("noborder", "true"),
         ("noborderrule", "2"),
-        ("position", "0,0"),
-        ("positionrule", "4"),
-        ("size", "420,260"),
-        ("sizerule", "4"),
     ];
-    // Keep a position/size KWin already remembered.
-    let remembered = kreadconfig(RULE, "positionrule") == "4";
     for (k, v) in settings {
-        if remembered && matches!(*k, "position" | "size") {
-            continue;
-        }
         kwriteconfig(RULE, k, v)?;
+    }
+    // Earlier versions asked KWin to remember position and size, which it never stored for this
+    // window (it hides rather than closes); Tyst now restores the position through a KWin script.
+    for k in ["position", "positionrule", "size", "sizerule"] {
+        kdeleteconfig(RULE, k)?;
     }
     add_to_rule_list(RULE)
 }

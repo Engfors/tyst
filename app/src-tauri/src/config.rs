@@ -41,6 +41,9 @@ pub struct MeetingSettings {
     pub name_prompt_seconds: u32,
     /// Meeting window geometry per display (keyed by display name), in logical pixels.
     pub window: BTreeMap<String, WindowGeometry>,
+    /// KDE: the meeting window's top-left corner in KWin's global coordinates, read through a
+    /// KWin script when the window hides (Wayland clients cannot read or set their position).
+    pub kwin_position: Option<(i32, i32)>,
 }
 
 /// How the dictation shortcut behaves (SPEC 8.4, 15 q5).
@@ -154,6 +157,7 @@ impl Default for MeetingSettings {
             compact: false,
             name_prompt_seconds: 30,
             window: BTreeMap::new(),
+            kwin_position: None,
         }
     }
 }

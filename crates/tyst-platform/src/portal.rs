@@ -213,7 +213,7 @@ pub fn ydotool_paste(shift: bool) -> Result<(), DesktopError> {
     // Linux input event codes: KEY_LEFTCTRL 29, KEY_LEFTSHIFT 42, KEY_V 47.
     let keys: &[&str] =
         if shift { &["29:1", "42:1", "47:1", "47:0", "42:0", "29:0"] } else { &["29:1", "47:1", "47:0", "29:0"] };
-    let status = std::process::Command::new("ydotool")
+    let status = crate::appimage::host_command("ydotool")
         .arg("key")
         .args(keys)
         .status()

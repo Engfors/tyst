@@ -140,6 +140,38 @@ impl Desktop {
         let _ = shown;
     }
 
+    /// KDE: remembers where the meeting window is, before it hides.
+    #[cfg(target_os = "linux")]
+    pub async fn remember_meeting_position(&self, app: &AppHandle) {
+        let Some(k) = self.kwin().await else { return };
+        match k.position(windows::MEETING_TITLE).await {
+            Ok(Some(p)) => {
+                use tauri::Manager;
+                app.state::<crate::state::AppState>().config.lock().expect("config lock").meetings.kwin_position =
+                    Some(p);
+            }
+            Ok(None) => {}
+            Err(e) => log::warn!("reading the meeting window position: {e}"),
+        }
+    }
+
+    /// KDE: puts the meeting window back where it was, once it is mapped.
+    #[cfg(target_os = "linux")]
+    pub async fn restore_meeting_position(&self, (x, y): (i32, i32)) {
+        let Some(k) = self.kwin().await else { return };
+        // A freshly shown window is mapped a moment later; try again briefly.
+        for _ in 0..25 {
+            match k.move_to(windows::MEETING_TITLE, x, y).await {
+                Ok(true) => break,
+                Ok(false) => tokio_sleep(Duration::from_millis(20)).await,
+                Err(e) => {
+                    log::warn!("placing the meeting window: {e}");
+                    break;
+                }
+            }
+        }
+    }
+
     /// Gives the keyboard back to the target window.
     pub async fn return_to(&self, target: &Target) {
         #[cfg(target_os = "linux")]

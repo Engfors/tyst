@@ -28,7 +28,8 @@
       "infoPlist": "Info.plist"
     },
     "linux": {
-      "appimage": { "bundleMediaFramework": false }
+      "appimage": { "bundleMediaFramework": false },
+      "deb": { "desktopTemplate": "../../packaging/linux/tyst.desktop" }
     }
   }
 }
