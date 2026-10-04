@@ -15,6 +15,7 @@
     "allow-dictation-edit",
     "allow-dictation-paste",
     "allow-dictation-state",
-    "allow-dictation-stop"
+    "allow-dictation-stop",
+    "allow-meeting-prompt-answer"
   ]
 }
