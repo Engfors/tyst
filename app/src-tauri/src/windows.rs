@@ -4,8 +4,9 @@
 //! The meeting window must never take keyboard focus from the meeting app (SPEC 8.1). It is
 //! created unfocused and non-focusable, always on top, without decorations or a taskbar entry;
 //! it only becomes focusable while the "Name this meeting" field waits for typing. On KDE
-//! Wayland, where clients cannot keep themselves on top or position themselves, a KWin rule does
-//! that job ([`crate::kwin`]).
+//! Wayland, where clients cannot keep themselves on top or position themselves, a KWin rule keeps
+//! it on top ([`crate::kwin`]) and a KWin script reads its position when it hides and restores it
+//! when it shows ([`crate::desktop`]).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -18,7 +19,7 @@ pub const MEETING: &str = "meeting";
 pub const PILL: &str = "pill";
 pub const SETTINGS: &str = "settings";
 pub const ONBOARDING: &str = "onboarding";
-/// Window titles; the KWin rules (and the pill placement script) match them.
+/// Window titles; the KWin rules and scripts match them.
 pub const MEETING_TITLE: &str = "Tyst Meeting";
 pub const PILL_TITLE: &str = "Tyst Dictation";
 /// The pill window: wide enough for two lines of live text, tall enough for four lines of
@@ -97,21 +98,49 @@ pub fn show_meeting(app: &AppHandle) {
             let _ = w.show();
             MEETING_SHOWN.store(true, Ordering::Release);
             crate::tray::refresh(app);
+            // KDE Wayland: KWin places new windows itself; put it back where the user left it.
+            #[cfg(target_os = "linux")]
+            if let Some(pos) = app.state::<AppState>().config().meetings.kwin_position
+                && tyst_platform::kwin::is_kde()
+            {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    app.state::<crate::desktop::Desktop>().restore_meeting_position(pos).await;
+                });
+            }
         }
         Err(e) => log::error!("meeting window: {e}"),
     }
 }
 
 pub fn hide_meeting(app: &AppHandle) {
+    MEETING_SHOWN.store(false, Ordering::Release);
+    crate::tray::refresh(app);
+    // KDE Wayland: ask KWin where the window is before it disappears.
+    #[cfg(target_os = "linux")]
+    if tyst_platform::kwin::is_kde() && app.get_webview_window(MEETING).is_some() {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            app.state::<crate::desktop::Desktop>().remember_meeting_position(&app).await;
+            finish_hide(&app);
+        });
+        return;
+    }
+    finish_hide(app);
+}
+
+fn finish_hide(app: &AppHandle) {
+    // Shown again while the position was being read: leave it up.
+    if MEETING_SHOWN.load(Ordering::Acquire) {
+        return;
+    }
     if let Some(w) = app.get_webview_window(MEETING) {
         let _ = w.hide();
         let _ = w.set_focusable(false);
     }
-    MEETING_SHOWN.store(false, Ordering::Release);
     if let Err(e) = app.state::<AppState>().config().save() {
         log::error!("saving config: {e}");
     }
-    crate::tray::refresh(app);
 }
 
 pub fn meeting_visible(app: &AppHandle) -> bool {

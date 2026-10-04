@@ -1,6 +1,7 @@
 //! KWin scripting over D-Bus (KDE Plasma 6, SPEC 10.2): which window is active (to paste back
-//! into it and to spot terminals), activating it again, and placing the dictation pill at the
-//! bottom centre of the active screen, which Wayland clients cannot do themselves.
+//! into it and to spot terminals), activating it again, placing the dictation pill at the
+//! bottom centre of the active screen, and reading and restoring the meeting window's position,
+//! which Wayland clients cannot do themselves.
 //!
 //! Each call loads a one-shot script into KWin, runs it and unloads it. Scripts answer by calling
 //! back into this process over D-Bus (`callDBus` to our unique bus name). Window captions are
@@ -127,6 +128,41 @@ impl KWin {
                    const g = w.frameGeometry;\n\
                    w.frameGeometry = {{ x: Math.round(a.x + (a.width - g.width) / 2), y: Math.round(a.y + a.height - g.height - {bottom}), width: g.width, height: g.height }};\n\
                    if ({focus}) {{ workspace.activeWindow = w; }}\n\
+                 }}\n\
+                 reply([w ? 'ok' : 'gone']);",
+                title = js(title),
+            ))
+            .await?;
+        Ok(v.first().is_some_and(|s| s == "ok"))
+    }
+
+    /// Top-left corner of the window titled `title`, in KWin's global logical coordinates, or
+    /// `None` if no such window is mapped. (Wayland clients cannot read their own position.)
+    pub async fn position(&self, title: &str) -> Result<Option<(i32, i32)>, DesktopError> {
+        let v = self
+            .run(&format!(
+                "const w = workspace.windowList().find(w => w.caption === {title});\n\
+                 reply(w ? [Math.round(w.frameGeometry.x), Math.round(w.frameGeometry.y)] : []);",
+                title = js(title),
+            ))
+            .await?;
+        Ok(match v.as_slice() {
+            [x, y] => x.parse().ok().zip(y.parse().ok()),
+            _ => None,
+        })
+    }
+
+    /// Moves the window titled `title` so its top-left corner is at (`x`, `y`), keeping its size.
+    /// The move is skipped when that corner is on no screen (a display that was unplugged).
+    /// Returns false if no such window is mapped.
+    pub async fn move_to(&self, title: &str, x: i32, y: i32) -> Result<bool, DesktopError> {
+        let v = self
+            .run(&format!(
+                "const w = workspace.windowList().find(w => w.caption === {title});\n\
+                 if (w) {{\n\
+                   const on = workspace.screens.some(s => {{ const g = s.geometry; \
+                     return {x} >= g.x && {x} < g.x + g.width && {y} >= g.y && {y} < g.y + g.height; }});\n\
+                   if (on) {{ const g = w.frameGeometry; w.frameGeometry = {{ x: {x}, y: {y}, width: g.width, height: g.height }}; }}\n\
                  }}\n\
                  reply([w ? 'ok' : 'gone']);",
                 title = js(title),

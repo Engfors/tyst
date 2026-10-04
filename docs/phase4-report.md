@@ -67,6 +67,15 @@ Host requirements: glibc 2.39 and `libstdc++` with `GLIBCXX_3.4.31` (the build h
 `fusermount3` (Arch: `fuse3`; the image uses the static type-2 runtime, so no `fuse2`). Arch
 meets these; Ubuntu 22.04 and Debian 12 do not. Size: 125 MB.
 
+- **Meeting window position on KDE Wayland.** The owner's run showed the window opening centred
+  after a restart: KWin's "remember position" rule never stored a position (it stayed `0,0`),
+  because the window hides instead of closing. The rule no longer asks for it; instead a KWin
+  script reads the window's position when it hides (saved in the config) and moves it back
+  there when it shows, unless that spot is on no screen any more. Quitting while the window is
+  shown keeps the position from the last time it hid.
+- **KDE service cache.** After installing or changing its desktop file or icon, Tyst runs
+  `kbuildsycoca6`; without it KDE's shortcut settings kept the old icon until the next rebuild.
+
 ## 3. Tested in the container
 
 Ubuntu 24.04, Xvfb, PipeWire 1.0.5 with WirePlumber and virtual devices, FUSE mount (not
