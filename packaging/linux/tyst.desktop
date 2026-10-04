@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name={{name}}
+Comment=Local meeting transcription and dictation
+Exec={{exec}}
+Icon={{icon}}
+Terminal=false
+Categories=Office;
+StartupWMClass=tyst

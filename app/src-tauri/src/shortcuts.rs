@@ -173,10 +173,10 @@ mod linux {
             .unwrap_or_else(|| home.join(".local/share"));
         let icon = data.join("icons/hicolor/128x128/apps").join(format!("{APP_ID}.png"));
         write_if_changed(&icon, ICON)?;
-        let quoted = format!("\"{}\"", exe.display().to_string().replace('"', "\\\""));
+        let exec = crate::appimage::exec_arg(&exe)?;
         let body = format!(
             "[Desktop Entry]\nType=Application\nName=Tyst\nComment=Local meeting transcription and dictation\n\
-             Exec={quoted} %U\nIcon={APP_ID}\nTerminal=false\nCategories=Office;AudioVideo;\n\
+             Exec={exec} %U\nIcon={APP_ID}\nTerminal=false\nCategories=Office;\n\
              X-GNOME-UsesNotifications=false\n"
         );
         write_if_changed(&data.join("applications").join(format!("{APP_ID}.desktop")), body.as_bytes())

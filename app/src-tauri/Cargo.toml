@@ -24,13 +24,14 @@ tyst-core.workspace = true
 tyst-platform = { workspace = true, features = ["desktop"] }
 tyst-runtime.workspace = true
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
-tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tokio = { version = "1", features = ["sync", "time"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Linux writes its login entry itself (`autostart.rs`).
+tauri-plugin-autostart = "2"
 tauri-plugin-global-shortcut = "2"
 
 [features]

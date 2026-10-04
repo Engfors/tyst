@@ -1,64 +1,54 @@
-//! Running from an AppImage (SPEC 10.2, Phase 4).
-//!
-//! The AppImage's launcher points GTK, GIO and GSettings at the libraries and modules inside the
-//! mounted image. Programs Tyst starts inherit that environment, so a GTK editor opened for a
-//! transcript would load Tyst's bundled modules (and break once Tyst quits and the image is
-//! unmounted). [`host_command`] starts a program with the host's own environment instead.
+//! Running from an AppImage (SPEC 10.2, Phase 4): which file to launch Tyst from, and opening
+//! files without passing on the AppImage's environment ([`tyst_platform::appimage`]).
 
-use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-/// Variables the AppImage launcher (linuxdeploy's GTK hook and the runtime) sets for Tyst itself.
-const LAUNCHER_VARS: &[&str] = &[
-    "APPDIR",
-    "APPIMAGE",
-    "ARGV0",
-    "OWD",
-    "GDK_PIXBUF_MODULE_FILE",
-    "GIO_MODULE_DIR",
-    "GI_TYPELIB_PATH",
-    "GSETTINGS_SCHEMA_DIR",
-    "GTK_DATA_PREFIX",
-    "GTK_EXE_PREFIX",
-    "GTK_IM_MODULE_FILE",
-    "GTK_PATH",
-    "GTK_THEME",
-];
+pub use tyst_platform::appimage::host_command;
 
-/// The AppImage file Tyst runs from, if any.
+/// The AppImage file Tyst runs from. `$APPIMAGE` is trusted only when this process runs from
+/// inside `$APPDIR` (or from an unpacked image, `APPIMAGE_EXTRACT_AND_RUN`) and the file exists,
+/// so a value inherited from another AppImage never becomes Tyst's login entry.
 pub fn path() -> Option<PathBuf> {
-    std::env::var_os("APPIMAGE").filter(|p| !p.is_empty()).map(PathBuf::from)
+    let image = std::env::var_os("APPIMAGE").filter(|p| !p.is_empty()).map(PathBuf::from)?;
+    if !image.is_file() {
+        return None;
+    }
+    let extracted = std::env::var_os("APPIMAGE_EXTRACT_AND_RUN").is_some_and(|v| v == "1");
+    let inside = std::env::var_os("APPDIR").filter(|d| !d.is_empty()).is_some_and(|dir| {
+        let exe = std::env::current_exe().and_then(|p| p.canonicalize());
+        let dir = Path::new(&dir).canonicalize();
+        matches!((exe, dir), (Ok(exe), Ok(dir)) if exe.starts_with(&dir))
+    });
+    (inside || extracted).then_some(image)
 }
 
-/// The command to start Tyst again: the AppImage file when running from one (the binary inside
-/// it lives in a mount that disappears), else the binary.
+/// The file to start Tyst from: the AppImage when running from one (the binary inside lives in a
+/// mount that disappears), else the binary.
 pub fn launch_path() -> Option<PathBuf> {
     path().or_else(|| std::env::current_exe().ok())
 }
 
-/// `program` with the AppImage launcher's variables removed when Tyst runs from an AppImage.
-pub fn host_command(program: impl AsRef<OsStr>) -> Command {
-    let mut cmd = Command::new(program);
-    let Some(appdir) = std::env::var_os("APPDIR") else {
-        return cmd;
-    };
-    for var in LAUNCHER_VARS {
-        cmd.env_remove(var);
+/// `path` as one argument in a desktop entry's `Exec=` (Desktop Entry Specification, "The Exec
+/// key"): double-quoted with `"`, `` ` ``, `$` and `\` escaped, `%` doubled so it is not a field
+/// code, then backslashes doubled for the string-value escaping that is undone first.
+pub fn exec_arg(path: &Path) -> Result<String, String> {
+    let s = path.to_str().ok_or_else(|| format!("{} is not valid UTF-8", path.display()))?;
+    if s.chars().any(char::is_control) {
+        return Err(format!("{} contains a control character", path.display()));
     }
-    if let Some(dirs) = std::env::var_os("XDG_DATA_DIRS") {
-        match host_data_dirs(&dirs, Path::new(&appdir)) {
-            Some(dirs) => cmd.env("XDG_DATA_DIRS", dirs),
-            None => cmd.env_remove("XDG_DATA_DIRS"),
-        };
+    let mut quoted = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' | '`' | '$' | '\\' => {
+                quoted.push('\\');
+                quoted.push(c);
+            }
+            '%' => quoted.push_str("%%"),
+            c => quoted.push(c),
+        }
     }
-    cmd
-}
-
-/// `XDG_DATA_DIRS` without the entries inside the AppImage; `None` if nothing is left.
-fn host_data_dirs(dirs: &OsStr, appdir: &Path) -> Option<OsString> {
-    let kept: Vec<PathBuf> = std::env::split_paths(dirs).filter(|d| !d.starts_with(appdir)).collect();
-    if kept.is_empty() { None } else { std::env::join_paths(kept).ok() }
+    quoted.push('"');
+    Ok(quoted.replace('\\', "\\\\"))
 }
 
 /// Opens a file or folder with the desktop's default application (`xdg-open`).
@@ -81,13 +71,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn data_dirs_drop_appimage_entries() {
-        let appdir = Path::new("/tmp/.mount_TystAb");
-        let dirs = OsStr::new("/tmp/.mount_TystAb/usr/share:/usr/local/share:/usr/share");
-        assert_eq!(host_data_dirs(dirs, appdir).unwrap(), "/usr/local/share:/usr/share");
-        assert_eq!(host_data_dirs(OsStr::new("/tmp/.mount_TystAb/usr/share"), appdir), None);
-        // A sibling directory with the same prefix is not inside the image.
-        let sibling = OsStr::new("/tmp/.mount_TystAbc/share");
-        assert_eq!(host_data_dirs(sibling, appdir).unwrap(), "/tmp/.mount_TystAbc/share");
+    fn exec_arg_quotes_and_escapes() {
+        let arg = |s: &str| exec_arg(Path::new(s)).unwrap();
+        assert_eq!(arg("/home/emil/Tyst.AppImage"), r#""/home/emil/Tyst.AppImage""#);
+        assert_eq!(arg("/home/emil/My Apps/Tyst.AppImage"), r#""/home/emil/My Apps/Tyst.AppImage""#);
+        assert_eq!(arg("/a/%s/b"), r#""/a/%%s/b""#);
+        assert_eq!(arg("/a/$HOME`x`"), r#""/a/\\$HOME\\`x\\`""#);
+        assert_eq!(arg(r#"/a/"b"\c"#), r#""/a/\\"b\\"\\\\c""#);
+        assert!(exec_arg(Path::new("/a/b\nc")).is_err());
     }
 }

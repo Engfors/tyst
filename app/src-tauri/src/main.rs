@@ -5,6 +5,8 @@
 
 #[cfg(target_os = "linux")]
 mod appimage;
+#[cfg(target_os = "linux")]
+mod autostart;
 mod commands;
 mod config;
 mod desktop;
@@ -39,7 +41,9 @@ fn main() {
 
     let builder = tauri::Builder::default();
     #[cfg(target_os = "macos")]
-    let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    let builder = builder
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::Builder::new().build());
     let app = builder
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // A second launch passes its command line to the running app.
@@ -52,7 +56,6 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_autostart::Builder::new().build())
         .manage(AppState::new(config))
         .manage(commands::FetchState::default())
         .manage(desktop::Desktop::default())

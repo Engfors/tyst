@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
@@ -156,8 +157,16 @@ pub fn config_set(app: AppHandle, config: Config) -> CmdResult {
 }
 
 pub fn apply_autostart(app: &AppHandle, on: bool) {
-    let al = app.autolaunch();
-    let r = if on { al.enable() } else { al.disable() };
+    #[cfg(target_os = "linux")]
+    let r = {
+        let _ = app;
+        crate::autostart::set(on)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let r = {
+        let al = app.autolaunch();
+        if on { al.enable() } else { al.disable() }
+    };
     if let Err(e) = r {
         log::warn!("launch at login: {e}");
     }
