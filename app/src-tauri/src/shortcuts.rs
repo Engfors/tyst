@@ -162,30 +162,36 @@ mod linux {
         });
     }
 
-    /// `~/.local/share/applications/com.engfors.tyst.desktop`: the portal identifies host apps by
-    /// their desktop file, and KDE lists the shortcuts under its name.
+    /// `~/.local/share/applications/com.engfors.tyst.desktop` and its icon: the portal identifies
+    /// host apps by their desktop file, and KDE lists the shortcuts under its name and icon. Written
+    /// on every start, so it follows an AppImage that was moved or replaced.
     fn install_desktop_file() -> Result<(), String> {
-        let exe = std::env::var_os("APPIMAGE")
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::current_exe().ok())
-            .ok_or("no executable path")?;
+        let exe = crate::appimage::launch_path().ok_or("no executable path")?;
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or("no HOME")?;
-        let dir = std::env::var_os("XDG_DATA_HOME")
+        let data = std::env::var_os("XDG_DATA_HOME")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| home.join(".local/share"))
-            .join("applications");
-        let path = dir.join(format!("{APP_ID}.desktop"));
+            .unwrap_or_else(|| home.join(".local/share"));
+        let icon = data.join("icons/hicolor/128x128/apps").join(format!("{APP_ID}.png"));
+        write_if_changed(&icon, ICON)?;
         let quoted = format!("\"{}\"", exe.display().to_string().replace('"', "\\\""));
         let body = format!(
             "[Desktop Entry]\nType=Application\nName=Tyst\nComment=Local meeting transcription and dictation\n\
-             Exec={quoted} %U\nIcon=audio-input-microphone\nTerminal=false\nCategories=Office;AudioVideo;\n\
+             Exec={quoted} %U\nIcon={APP_ID}\nTerminal=false\nCategories=Office;AudioVideo;\n\
              X-GNOME-UsesNotifications=false\n"
         );
-        if std::fs::read_to_string(&path).is_ok_and(|old| old == body) {
+        write_if_changed(&data.join("applications").join(format!("{APP_ID}.desktop")), body.as_bytes())
+    }
+
+    const ICON: &[u8] = include_bytes!("../icons/128x128.png");
+
+    fn write_if_changed(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+        if std::fs::read(path).is_ok_and(|old| old == bytes) {
             return Ok(());
         }
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        std::fs::write(&path, body).map_err(|e| format!("{}: {e}", path.display()))
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
     }
 }
 

@@ -9,8 +9,7 @@
 //! with `kwriteconfig6` into `kwinrulesrc` under fixed group names, so reinstalling replaces
 //! them, and KWin reloads its config over D-Bus.
 
-use std::process::Command;
-
+use crate::appimage::host_command;
 use crate::windows::{MEETING_TITLE, PILL_TITLE};
 
 const RULE: &str = "tyst-meeting-window";
@@ -19,7 +18,7 @@ const PILL_RULE: &str = "tyst-dictation-pill";
 use tyst_platform::kwin::is_kde;
 
 fn kwriteconfig(group: &str, key: &str, value: &str) -> Result<(), String> {
-    let out = Command::new("kwriteconfig6")
+    let out = host_command("kwriteconfig6")
         .args(["--file", "kwinrulesrc", "--group", group, "--key", key, value])
         .output()
         .map_err(|e| format!("kwriteconfig6: {e}"))?;
@@ -27,7 +26,7 @@ fn kwriteconfig(group: &str, key: &str, value: &str) -> Result<(), String> {
 }
 
 fn kreadconfig(group: &str, key: &str) -> String {
-    Command::new("kreadconfig6")
+    host_command("kreadconfig6")
         .args(["--file", "kwinrulesrc", "--group", group, "--key", key])
         .output()
         .ok()
@@ -43,7 +42,7 @@ pub fn install_rule() -> Result<(), String> {
     }
     install_meeting_rule()?;
     install_pill_rule()?;
-    let reload = Command::new("dbus-send")
+    let reload = host_command("dbus-send")
         .args(["--session", "--type=method_call", "--dest=org.kde.KWin", "/KWin", "org.kde.KWin.reconfigure"])
         .status();
     if !reload.is_ok_and(|s| s.success()) {

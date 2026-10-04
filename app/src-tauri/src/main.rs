@@ -3,6 +3,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "linux")]
+mod appimage;
 mod commands;
 mod config;
 mod desktop;
@@ -114,6 +116,10 @@ fn main() {
             if !cfg.onboarded {
                 windows::show_onboarding(&handle);
             } else {
+                // Rewrites the login entry, so it follows an AppImage that was moved or replaced.
+                if cfg.launch_at_login {
+                    commands::apply_autostart(&handle, true);
+                }
                 if tyst_runtime::fetch::installed(&tyst_runtime::fetch::DEFAULT_MODELS, &cfg.models_dir()) {
                     AppState::preload(&handle);
                 }
