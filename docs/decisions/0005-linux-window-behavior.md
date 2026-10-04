@@ -1,6 +1,6 @@
 # 0005 · Linux window behavior: KWin rules, not layer-shell
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-04)
 - **Date:** 2026-10-04
 
 ## Context

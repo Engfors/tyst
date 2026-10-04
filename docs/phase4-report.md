@@ -1,7 +1,7 @@
 # Phase 4 report: Arch Linux / KDE Wayland port
 
 - **Status:** Accepted on Arch Linux / KDE Plasma (Wayland) by the owner on 2026-10-04 (section 4).
-  ADR 0005 is Proposed until the owner confirms it.
+  ADR 0005 accepted by the owner the same day.
 - **Code:** `crates/tyst-platform/src/appimage.rs` (environment for programs Tyst starts),
   `app/src-tauri/src/{appimage,autostart}.rs`, AppImage handling in `shortcuts.rs`, `commands.rs`,
   `kwin.rs` and `main.rs`; `packaging/linux/`; the `appimage` job in `.github/workflows/ci.yml`.
