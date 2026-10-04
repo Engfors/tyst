@@ -3,7 +3,7 @@
 Local, privacy-first meeting transcription and dictation for macOS and Linux. Swedish and English,
 including mixed-language meetings. Nothing leaves the device.
 
-Status: **Phase 4** (Linux AppImage). See [SPEC.md](SPEC.md) for the specification,
+Status: **Phase 4**: AppImage built, Arch acceptance open. See [SPEC.md](SPEC.md) for the specification,
 [docs/phase4-report.md](docs/phase4-report.md) for the AppImage, [docs/phase3-report.md](docs/phase3-report.md)
 for dictation, [docs/phase2-report.md](docs/phase2-report.md) for the meeting app,
 [docs/phase1-report.md](docs/phase1-report.md) for pipeline measurements and
@@ -39,9 +39,11 @@ install -Dm755 target/release/bundle/appimage/Tyst_*_amd64.AppImage ~/.local/sha
 ~/.local/share/AppImage/Tyst.AppImage
 ```
 
-CI builds the same AppImage on Ubuntu 24.04 (artifact `tyst-appimage`). `NO_STRIP=true` is needed on
-Arch, whose libraries use ELF sections linuxdeploy's `strip` does not know. The AppImage needs
-`fusermount3` (`fuse3`). Models are not bundled.
+CI builds the same AppImage on Ubuntu 24.04 as a test build (artifact `tyst-appimage`: unsigned, no
+published checksum; releases come in Phase 5). `NO_STRIP=true` is needed on Arch, whose libraries use
+ELF sections linuxdeploy's `strip` does not know. The AppImage needs glibc 2.39 or newer with a
+matching `libstdc++` (Arch is fine; Ubuntu 22.04 and Debian 12 are too old) and `fusermount3`
+(`fuse3`). Models are not bundled.
 
 Models live outside the repo: `~/Library/Application Support/Tyst/models` on macOS,
 `~/.local/share/tyst/models` on Linux, or `$TYST_MODELS`. After downloading, `models fetch` also writes
