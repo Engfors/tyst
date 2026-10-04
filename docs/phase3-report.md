@@ -1,7 +1,7 @@
 # Phase 3 report: dictation
 
-- **Status:** Built; awaiting owner acceptance on Arch Linux / KDE Plasma (Wayland). macOS code
-  compiles in CI but has not run on a Mac (testing there is postponed).
+- **Status:** Accepted on Arch Linux / KDE Plasma (Wayland) by the owner on 2026-10-04 (section 5).
+  macOS code compiles in CI but has not run on a Mac (testing there is postponed).
 - **Code:** `crates/tyst-runtime/src/dictation.rs`, `crates/tyst-platform/src/{clipboard,portal,kwin,macos_input}.rs`
   (feature `desktop`), `app/src-tauri/src/{dictation,desktop,shortcuts}.rs`, `app/ui/src/pill/`,
   `crates/tyst-cli/src/dictate.rs`.
@@ -63,7 +63,7 @@ Steps: Arch test steps shared with the owner (five apps, Swedish characters, lat
 restore, hold vs tap, Esc/Tab, direct mode, dictation during a meeting, CLI latency on the owner's clips).
 Owner run on Arch / KDE Plasma (Wayland), 2026-10-04: the five apps, Swedish characters, clipboard
 restore, Esc/Tab, direct mode and dictation during a meeting pass. Hold vs tap failed on one point:
-the shortcut in the preview pasted instead of recording more; it now records more (re-test pending).
+the shortcut in the preview pasted instead of recording more; it now records more, and the re-test passed.
 In the app, listening began 38–48 ms after the shortcut and the text was ready 1–101 ms after stop.
 `tyst-cli dictate` on the owner's 10 Swedish clips: stop → text p50 0.13 s, p95/max 0.25 s.
 
