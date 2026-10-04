@@ -33,6 +33,7 @@ arboard = { version = "3.6", optional = true, default-features = false }
 [target.'cfg(target_os = "linux")'.dependencies]
 pipewire = { version = "0.10", optional = true }
 arboard = { version = "3.6", optional = true, default-features = false, features = ["wayland-data-control"] }
+# `screencast` is not used directly, but ashpd's `remote_desktop` module does not build without it.
 ashpd = { version = "0.13", optional = true, default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast"] }
 zbus = { version = "5", optional = true, default-features = false, features = ["tokio"] }
 futures-util = { version = "0.3", optional = true, default-features = false }

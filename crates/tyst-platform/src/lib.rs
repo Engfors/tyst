@@ -52,6 +52,10 @@ pub enum DesktopError {
     Clipboard(String),
     #[error("desktop portal: {0}")]
     Portal(String),
+    /// The portal (or the session bus) is not there at all, as opposed to a portal that
+    /// answered with a refusal or an error.
+    #[error("desktop portal not available: {0}")]
+    PortalMissing(String),
     #[error("KWin: {0}")]
     KWin(String),
     #[error("keyboard input: {0}")]
