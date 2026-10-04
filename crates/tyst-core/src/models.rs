@@ -126,25 +126,71 @@ pub enum FileStatus {
     WrongChecksum,
 }
 
-/// Checks every file of a model. `full` also hashes the files (slow for the encoders).
-pub fn verify(spec: &ModelSpec, models_dir: &Path, full: bool) -> Result<Vec<(String, FileStatus)>> {
+/// How hard [`verify`] looks at a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Check {
+    /// Size only: cheap, for "is it there" in the UI. Says nothing about the contents.
+    Size,
+    /// Size, and a SHA-256 that matched the pin for exactly this file (same size and mtime).
+    /// A file without such a stamp is hashed once and stamped. What loading and fetching use.
+    Stamp,
+    /// Hash every file again (slow for the encoders) and refresh the stamps.
+    Full,
+}
+
+/// Checks every file of a model.
+pub fn verify(spec: &ModelSpec, models_dir: &Path, check: Check) -> Result<Vec<(String, FileStatus)>> {
     let dir = models_dir.join(&spec.dir);
     let pinned = spec.files.iter().map(|f| (&f.name, f.size, &f.sha256));
     let derived = spec.derived.iter().map(|d| (&d.name, d.size, &d.sha256));
     let mut out = Vec::new();
     for (name, size, sha256) in pinned.chain(derived) {
-        out.push((name.clone(), file_status(&dir.join(name), size, sha256, full)?));
+        out.push((name.clone(), file_status(&dir.join(name), size, sha256, check)?));
     }
     Ok(out)
 }
 
-fn file_status(path: &Path, size: u64, sha256: &str, full: bool) -> Result<FileStatus> {
-    Ok(match std::fs::metadata(path) {
-        Err(_) => FileStatus::Missing,
-        Ok(m) if m.len() != size => FileStatus::WrongSize { actual: m.len() },
-        Ok(_) if full && sha256_file(path)? != sha256 => FileStatus::WrongChecksum,
-        Ok(_) => FileStatus::Ok,
-    })
+/// Status of one model file (see [`Check`]).
+pub fn file_status(path: &Path, size: u64, sha256: &str, check: Check) -> Result<FileStatus> {
+    let meta = match std::fs::metadata(path) {
+        Err(_) => return Ok(FileStatus::Missing),
+        Ok(m) if m.len() != size => return Ok(FileStatus::WrongSize { actual: m.len() }),
+        Ok(m) => m,
+    };
+    if check == Check::Size || (check == Check::Stamp && stamp_matches(path, &meta, sha256)) {
+        return Ok(FileStatus::Ok);
+    }
+    if sha256_file(path)? != sha256 {
+        let _ = std::fs::remove_file(stamp_path(path));
+        return Ok(FileStatus::WrongChecksum);
+    }
+    write_stamp(path, sha256)?;
+    Ok(FileStatus::Ok)
+}
+
+/// `<name>.verified` next to a model file: its size, mtime and SHA-256 when it last matched.
+fn stamp_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".verified");
+    path.with_file_name(name)
+}
+
+fn stamp_line(meta: &std::fs::Metadata, sha256: &str) -> Option<String> {
+    let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    Some(format!("{} {} {}\n", meta.len(), mtime, sha256))
+}
+
+fn stamp_matches(path: &Path, meta: &std::fs::Metadata, sha256: &str) -> bool {
+    let Some(expected) = stamp_line(meta, sha256) else { return false };
+    std::fs::read_to_string(stamp_path(path)).is_ok_and(|s| s == expected)
+}
+
+/// Records that `path` (as it is now) hashed to `sha256`. Call only after checking the hash.
+pub fn write_stamp(path: &Path, sha256: &str) -> Result<()> {
+    let meta = std::fs::metadata(path).map_err(|e| Error::io(path, e))?;
+    let Some(line) = stamp_line(&meta, sha256) else { return Ok(()) };
+    let stamp = stamp_path(path);
+    crate::private_fs::write_replace(&stamp, line.as_bytes())
 }
 
 /// Computes a derived file from its (already downloaded) source and checks it against the pin.
@@ -167,12 +213,14 @@ pub fn derive(spec: &ModelSpec, models_dir: &Path, file: &DerivedFile) -> Result
         )));
     }
     let target = dir.join(&file.name);
-    std::fs::rename(&part, &target).map_err(|e| Error::io(&target, e))
+    std::fs::rename(&part, &target).map_err(|e| Error::io(&target, e))?;
+    write_stamp(&target, &file.sha256)
 }
 
-/// Directory of a model whose files are present with the right sizes.
+/// Directory of a model whose files are present and match their pins ([`Check::Stamp`]: hashed
+/// once, then trusted while size and mtime stay the same).
 pub fn installed_dir(spec: &ModelSpec, models_dir: &Path) -> Result<PathBuf> {
-    let bad: Vec<String> = verify(spec, models_dir, false)?
+    let bad: Vec<String> = verify(spec, models_dir, Check::Stamp)?
         .into_iter()
         .filter(|(_, s)| *s != FileStatus::Ok)
         .map(|(n, s)| format!("{n} ({s:?})"))
@@ -252,12 +300,32 @@ mod tests {
         std::fs::create_dir_all(dir.join("m")).unwrap();
         std::fs::write(dir.join("m/a"), "abc").unwrap();
         std::fs::write(dir.join("m/b"), "zz").unwrap();
-        let st = verify(&spec, &dir, true).unwrap();
+        let st = verify(&spec, &dir, Check::Full).unwrap();
         assert_eq!(st[0].1, FileStatus::Ok);
         assert_eq!(st[1].1, FileStatus::WrongSize { actual: 2 });
         assert_eq!(st[2].1, FileStatus::Missing);
         assert_eq!(st[3], ("d".to_string(), FileStatus::Missing));
         assert!(installed_dir(&spec, &dir).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn stamp_catches_a_same_size_change() {
+        let dir = std::env::temp_dir().join(format!("tyst-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("a");
+        let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        std::fs::write(&f, "abc").unwrap();
+        // Not stamped yet: hashed once, then stamped.
+        assert_eq!(file_status(&f, 3, abc, Check::Stamp).unwrap(), FileStatus::Ok);
+        assert!(stamp_path(&f).exists());
+        assert_eq!(file_status(&f, 3, abc, Check::Stamp).unwrap(), FileStatus::Ok);
+        // Same size, different bytes (and a new mtime): the stamp no longer applies.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&f, "abd").unwrap();
+        assert_eq!(file_status(&f, 3, abc, Check::Size).unwrap(), FileStatus::Ok);
+        assert_eq!(file_status(&f, 3, abc, Check::Stamp).unwrap(), FileStatus::WrongChecksum);
+        assert!(!stamp_path(&f).exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

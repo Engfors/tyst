@@ -212,7 +212,8 @@ pub fn models_status(app: AppHandle) -> CmdResult<Vec<ModelRow>> {
     let manifest = Manifest::builtin();
     let mut rows = Vec::new();
     for (id, spec) in &manifest.models {
-        let statuses = tyst_core::models::verify(spec, &dir, false).map_err(|e| e.to_string())?;
+        let statuses =
+            tyst_core::models::verify(spec, &dir, tyst_core::models::Check::Size).map_err(|e| e.to_string())?;
         let ok = statuses.iter().filter(|(_, s)| *s == FileStatus::Ok).count();
         let missing = statuses.iter().filter(|(_, s)| *s == FileStatus::Missing).count();
         let status = if fetch::installed(&[id.as_str()], &dir) {
@@ -307,7 +308,12 @@ pub async fn models_verify(app: AppHandle, full: bool) -> CmdResult<Vec<String>>
         let manifest = Manifest::builtin();
         let mut problems = Vec::new();
         for (id, spec) in &manifest.models {
-            let statuses = tyst_core::models::verify(spec, &dir, full).map_err(|e| e.to_string())?;
+            let statuses = tyst_core::models::verify(
+                spec,
+                &dir,
+                if full { tyst_core::models::Check::Full } else { tyst_core::models::Check::Stamp },
+            )
+            .map_err(|e| e.to_string())?;
             if id == PARAKEET && statuses.iter().all(|(_, s)| *s == FileStatus::Missing) {
                 continue;
             }

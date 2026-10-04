@@ -25,7 +25,8 @@ pub struct ModelsArgs {
 pub enum ModelsAction {
     /// Show the pinned models and whether they are installed.
     List,
-    /// Check installed files (sizes; with --full also SHA-256).
+    /// Check installed files: size plus a SHA-256 stamp (files never hashed are hashed once);
+    /// with --full every file is hashed again.
     Verify {
         #[arg(long)]
         full: bool,
@@ -55,7 +56,8 @@ pub fn run(args: ModelsArgs) -> Result<()> {
         ModelsAction::Verify { full } => {
             let mut bad = 0;
             for (id, spec) in &manifest.models {
-                let statuses = models::verify(spec, &dir, full)?;
+                let statuses =
+                    models::verify(spec, &dir, if full { models::Check::Full } else { models::Check::Stamp })?;
                 // Models outside the default fetch (Parakeet, for forced English) are optional.
                 if !DEFAULT_MODELS.contains(&id.as_str()) && statuses.iter().all(|(_, s)| *s == FileStatus::Missing) {
                     println!("{id:<22} not installed (optional: `tyst-cli models fetch {id}`)");
