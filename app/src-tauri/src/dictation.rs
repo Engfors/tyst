@@ -25,6 +25,7 @@ use tyst_runtime::dictation::{Dictated, Dictation, DictationEvent, DictationOpti
 
 use crate::config::{PasteMode, Trigger};
 use crate::desktop::{Desktop, Pasted, Target};
+use crate::secrets::KeyboardToken;
 use crate::state::{AppState, lang_code};
 use crate::{sources, tray, windows};
 
@@ -33,6 +34,12 @@ pub const PILL_EVENT: &str = "tyst://dictation";
 pub const HOLD: Duration = Duration::from_millis(400);
 /// How long "Pasted" or a message stays before the pill hides.
 const FLASH: Duration = Duration::from_millis(1800);
+/// How long the meeting prompt waits for an answer.
+const PROMPT: Duration = Duration::from_secs(20);
+
+fn bound_shortcut(app: &AppHandle, id: &str) -> Option<String> {
+    crate::shortcuts::status(app).bound.into_iter().find(|(i, trigger)| i == id && !trigger.is_empty()).map(|(_, t)| t)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -52,6 +59,9 @@ pub enum Phase {
     Pasted,
     /// A short note ("Nothing heard", an error), then the pill hides.
     Message,
+    /// Meeting detection (SPEC 8.3, 9.4): "Teams is using the microphone", with Start and
+    /// Dismiss. Shown without taking focus, so joining the call is not interrupted.
+    Prompt,
 }
 
 impl Phase {
@@ -78,6 +88,8 @@ pub struct PillState {
     pub languages: Vec<&'static str>,
     /// The dictation shortcut as the desktop shows it ("Ctrl+Å"), for the preview's hint.
     pub shortcut: Option<String>,
+    /// The meeting shortcut, for the meeting prompt's hint.
+    pub meeting_shortcut: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -108,8 +120,12 @@ pub enum Cmd {
     Discard,
     /// Tab: Auto -> SV -> EN.
     CycleLanguage,
-    /// Hide a flash ("Pasted", a message) if it is still the one shown.
+    /// Hide a flash ("Pasted", a message, a prompt) if it is still the one shown.
     HideFlash(u64),
+    /// Meeting detection: this app started using the microphone; ask whether to transcribe.
+    Prompt(String),
+    /// The prompt's answer (or the meeting started another way): start transcribing or not.
+    PromptAnswer(bool),
     Event(DictationEvent),
 }
 
@@ -139,7 +155,7 @@ impl Gesture {
         self.down_at = Some(at);
         self.started = false;
         match phase {
-            Phase::Idle | Phase::Message | Phase::Pasted => {
+            Phase::Idle | Phase::Message | Phase::Pasted | Phase::Prompt => {
                 self.started = true;
                 Action::Start
             }
@@ -264,7 +280,7 @@ impl Ctl {
                 }
             }
             Cmd::Toggle => match self.phase {
-                Phase::Idle | Phase::Message | Phase::Pasted => self.start(),
+                Phase::Idle | Phase::Message | Phase::Pasted | Phase::Prompt => self.start(),
                 Phase::Starting | Phase::Listening => self.stop(),
                 Phase::Preview => self.resume(),
                 _ => {}
@@ -279,8 +295,17 @@ impl Ctl {
             Cmd::Edit(text) if self.phase == Phase::Preview => self.text = text,
             Cmd::Copy(text) if matches!(self.phase, Phase::Preview | Phase::Pasted) => self.copy(&text),
             Cmd::CycleLanguage => self.cycle_language(),
-            Cmd::HideFlash(n) if n == self.flash && matches!(self.phase, Phase::Pasted | Phase::Message) => {
+            Cmd::HideFlash(n)
+                if n == self.flash && matches!(self.phase, Phase::Pasted | Phase::Message | Phase::Prompt) =>
+            {
                 self.close(false)
+            }
+            Cmd::Prompt(name) if self.phase == Phase::Idle => self.prompt(&name),
+            Cmd::PromptAnswer(start) if self.phase == Phase::Prompt => {
+                self.close(false);
+                if start && let Err(e) = crate::state::start_meeting(&self.app) {
+                    crate::notify_error(&self.app, &e);
+                }
             }
             Cmd::Event(e) => self.on_event(e),
             _ => {}
@@ -308,11 +333,8 @@ impl Ctl {
             terminal: self.target.class().is_some_and(|c| crate::config::is_terminal(c, &cfg.terminal_classes)),
             platform: std::env::consts::OS,
             languages: self.languages(),
-            shortcut: crate::shortcuts::status(&self.app)
-                .bound
-                .into_iter()
-                .find(|(id, trigger)| id == crate::shortcuts::DICTATE && !trigger.is_empty())
-                .map(|(_, trigger)| trigger),
+            shortcut: bound_shortcut(&self.app, crate::shortcuts::DICTATE),
+            meeting_shortcut: bound_shortcut(&self.app, crate::shortcuts::MEETING),
         }
     }
 
@@ -496,13 +518,15 @@ impl Ctl {
         let cfg = self.cfg();
         let app = self.app.clone();
         let desktop = app.state::<Desktop>();
+        let keyboard = app.state::<KeyboardToken>();
+        let old_token = self.block_on(keyboard.get(&app));
         let t0 = Instant::now();
         let r = self.block_on(desktop.paste(
             &self.target,
             &text,
             cfg.restore_clipboard,
             &cfg.terminal_classes,
-            cfg.keyboard_token.clone(),
+            old_token.clone(),
         ));
         match r {
             Ok((pasted, token)) => {
@@ -512,8 +536,8 @@ impl Ctl {
                     text.chars().count(),
                     t0.elapsed().as_millis()
                 );
-                if token != cfg.keyboard_token {
-                    self.app.state::<AppState>().update_config(|c| c.dictation.keyboard_token = token);
+                if token != old_token {
+                    self.block_on(keyboard.set(&app, token));
                 }
                 self.text = text;
                 if pasted == Pasted::ClipboardOnly {
@@ -603,10 +627,21 @@ impl Ctl {
         self.flash_timer();
     }
 
+    fn prompt(&mut self, app_name: &str) {
+        log::info!("meeting detection: asking whether to transcribe");
+        self.message = Some(format!("{app_name} is using the microphone. Transcribe this meeting?"));
+        self.set_phase(Phase::Prompt);
+        let app = self.app.clone();
+        self.block_on(app.state::<Desktop>().show_pill(&app, false));
+        self.flash_timer();
+    }
+
     fn flash_timer(&mut self) {
         self.flash += 1;
         let (n, tx) = (self.flash, self.tx.clone());
-        let wait = if self.phase == Phase::Message && self.message.as_deref().is_some_and(|m| m.len() > 20) {
+        let wait = if self.phase == Phase::Prompt {
+            PROMPT
+        } else if self.phase == Phase::Message && self.message.as_deref().is_some_and(|m| m.len() > 20) {
             FLASH * 2
         } else {
             FLASH

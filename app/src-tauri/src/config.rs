@@ -24,8 +24,28 @@ pub struct Config {
     pub launch_at_login: bool,
     /// ONNX Runtime threads.
     pub threads: usize,
+    /// Unload the models after this many minutes without a meeting or dictation; 0 keeps them
+    /// loaded (SPEC 5.2).
+    pub models_idle_minutes: u32,
     pub meetings: MeetingSettings,
     pub dictation: DictationSettings,
+    pub updates: UpdateSettings,
+}
+
+/// Update notification (SPEC 9.7).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// Ask GitHub for a newer release on launch and once a day.
+    pub check: bool,
+    /// A GitHub token is in the keychain (needed while the repository is private).
+    pub github_token: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self { check: true, github_token: false }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -33,6 +53,8 @@ pub struct Config {
 pub struct MeetingSettings {
     /// Capture system audio as Others (off: Me only).
     pub system_audio: bool,
+    /// Remove the system audio's echo from the microphone (SPEC 6.4), for meetings on speakers.
+    pub echo_cancellation: bool,
     /// Show the meeting window when recording starts.
     pub show_window_on_start: bool,
     /// Start in the compact one-line mode.
@@ -41,6 +63,10 @@ pub struct MeetingSettings {
     pub name_prompt_seconds: u32,
     /// Meeting window geometry per display (keyed by display name), in logical pixels.
     pub window: BTreeMap<String, WindowGeometry>,
+    /// Ask to transcribe when a meeting app starts using the microphone (SPEC 9.4, off by default).
+    pub detect: bool,
+    /// Apps that count as meetings, matched against part of the app's name or binary.
+    pub detect_apps: Vec<String>,
     /// KDE: the meeting window's top-left corner in KWin's global coordinates, read through a
     /// KWin script when the window hides (Wayland clients cannot read or set their position).
     pub kwin_position: Option<(i32, i32)>,
@@ -89,7 +115,12 @@ pub struct DictationSettings {
     /// Swedish keyboard). On Linux the desktop binds the shortcuts (System Settings).
     pub shortcut: String,
     pub meeting_shortcut: String,
-    /// Restore token of the keyboard portal (Linux), so paste does not ask again.
+    /// Linux: the keyboard portal's restore token is in the keychain ([`crate::secrets`]), so
+    /// paste does not ask again.
+    pub keyboard_access: bool,
+    /// Where versions before 0.2 kept that token. Read once to move it into the keychain
+    /// (issue #8), never written back.
+    #[serde(skip_serializing)]
     pub keyboard_token: Option<String>,
 }
 
@@ -108,6 +139,7 @@ impl Default for DictationSettings {
             last_lang: tyst_core::transcript::Lang::Sv,
             shortcut: "Super+BracketLeft".into(),
             meeting_shortcut: "Super+Shift+BracketLeft".into(),
+            keyboard_access: false,
             keyboard_token: None,
         }
     }
@@ -143,8 +175,10 @@ impl Default for Config {
             labels: SpeakerLabels::default(),
             launch_at_login: true,
             threads: 4,
+            models_idle_minutes: 0,
             meetings: MeetingSettings::default(),
             dictation: DictationSettings::default(),
+            updates: UpdateSettings::default(),
         }
     }
 }
@@ -153,10 +187,13 @@ impl Default for MeetingSettings {
     fn default() -> Self {
         Self {
             system_audio: true,
+            echo_cancellation: true,
             show_window_on_start: true,
             compact: false,
             name_prompt_seconds: 30,
             window: BTreeMap::new(),
+            detect: false,
+            detect_apps: tyst_platform::mic_watch::DEFAULT_APPS.iter().map(|s| s.to_string()).collect(),
             kwin_position: None,
         }
     }
@@ -281,6 +318,15 @@ mod tests {
         }
         // A bare class matches a reverse-DNS entry too (X11 WM_CLASS "konsole").
         assert!(is_terminal("konsole", &list));
+    }
+
+    #[test]
+    fn keyboard_token_is_read_but_never_written() {
+        let c: Config = toml::from_str("[dictation]\nkeyboard_token = \"secret\"\n").unwrap();
+        assert_eq!(c.dictation.keyboard_token.as_deref(), Some("secret"));
+        let text = toml::to_string_pretty(&c).unwrap();
+        assert!(!text.contains("secret"), "{text}");
+        assert!(!serde_json::to_string(&c).unwrap().contains("secret"));
     }
 
     #[test]

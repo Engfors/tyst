@@ -19,7 +19,9 @@ use tyst_runtime::fetch::{self, DEFAULT_MODELS, Progress};
 use crate::config::{self, Config};
 use crate::desktop::Desktop;
 use crate::dictation::{self, Cmd};
+use crate::secrets::KeyboardToken;
 use crate::state::{self, AppState, Snapshot};
+use crate::updates::{self, UpdateView, Updates};
 use crate::{shortcuts, windows};
 
 pub const MODELS_EVENT: &str = "tyst://models";
@@ -110,6 +112,7 @@ pub struct ConfigView {
     pub default_transcripts_dir: String,
     pub default_models_dir: String,
     pub system_audio_supported: bool,
+    pub detect_supported: bool,
     pub version: String,
     pub platform: &'static str,
 }
@@ -122,6 +125,7 @@ pub fn config_get(app: AppHandle) -> ConfigView {
         default_transcripts_dir: config::default_transcripts_dir().display().to_string(),
         default_models_dir: tyst_core::models::default_models_dir().display().to_string(),
         system_audio_supported: crate::sources::system_audio().is_some(),
+        detect_supported: crate::detect::SUPPORTED,
         version: env!("CARGO_PKG_VERSION").into(),
         platform: std::env::consts::OS,
     }
@@ -143,6 +147,8 @@ pub fn config_set(app: AppHandle, config: Config) -> CmdResult {
     let mut config = config;
     config.meetings.window = old.meetings.window.clone();
     config.dictation.keyboard_token = old.dictation.keyboard_token.clone();
+    config.dictation.keyboard_access = old.dictation.keyboard_access;
+    config.updates.github_token = old.updates.github_token;
     config.dictation.last_lang = old.dictation.last_lang;
     let rebind = config.dictation.enabled != old.dictation.enabled
         || config.dictation.shortcut != old.dictation.shortcut
@@ -497,7 +503,7 @@ pub fn dictation_info(app: AppHandle) -> DictationInfo {
     let cfg = app.state::<AppState>().config();
     DictationInfo {
         shortcuts: shortcuts::status(&app),
-        keyboard_granted: cfg.dictation.keyboard_token.is_some(),
+        keyboard_granted: cfg.dictation.keyboard_access || cfg.dictation.keyboard_token.is_some(),
         english_model: fetch::installed(&[PARAKEET], &cfg.models_dir()),
     }
 }
@@ -511,10 +517,40 @@ pub fn dictation_setup_shortcuts(app: AppHandle) {
 /// Asks for keyboard access for paste now (Linux: the desktop's consent dialog).
 #[tauri::command]
 pub async fn dictation_setup_keyboard(app: AppHandle) -> CmdResult {
-    let token = app.state::<AppState>().config().dictation.keyboard_token;
+    let keyboard = app.state::<KeyboardToken>();
+    let token = keyboard.get(&app).await;
     let token = app.state::<Desktop>().setup_keyboard(token).await?;
-    app.state::<AppState>().update_config(|c| c.dictation.keyboard_token = token);
+    keyboard.set(&app, token).await;
     Ok(())
+}
+
+/// The meeting prompt's Start or Dismiss (meeting detection).
+#[tauri::command]
+pub fn meeting_prompt_answer(app: AppHandle, start: bool) {
+    dictation::send(&app, Cmd::PromptAnswer(start));
+}
+
+#[tauri::command]
+pub fn updates_state(app: AppHandle) -> UpdateView {
+    app.state::<Updates>().view(&app)
+}
+
+#[tauri::command]
+pub async fn updates_check(app: AppHandle) -> Result<UpdateView, String> {
+    tauri::async_runtime::spawn_blocking(move || updates::check(&app)).await.map_err(|e| e.to_string())
+}
+
+/// Stores (or with `None` removes) the GitHub token for the update check. The token goes to the
+/// keychain only and is never sent back to the UI.
+#[tauri::command]
+pub async fn updates_set_token(app: AppHandle, token: Option<String>) -> Result<UpdateView, String> {
+    updates::set_token(&app, token).await?;
+    tauri::async_runtime::spawn_blocking(move || updates::check(&app)).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn updates_open_release(app: AppHandle) -> CmdResult {
+    updates::open_release(&app)
 }
 
 #[tauri::command]
