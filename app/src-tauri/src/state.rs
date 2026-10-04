@@ -565,6 +565,7 @@ pub fn save_meeting(app: &AppHandle, title: Option<String>) -> Result<String, St
     match stopped.try_save(title) {
         Ok(path) => {
             st.session.lock().expect("session lock").saved();
+            st.live.lock().expect("live lock").warning = None;
             let path = path.display().to_string();
             st.emit_state(app);
             let _ = app.emit(MEETING_EVENT, UiEvent::Saved { path: path.clone() });
@@ -574,7 +575,12 @@ pub fn save_meeting(app: &AppHandle, title: Option<String>) -> Result<String, St
             let (stopped, e) = *failed;
             // Keep the meeting so the user can try again (another folder, after freeing space).
             st.session.lock().expect("session lock").save_failed(stopped, token);
+            // Kept in the live state too: the next snapshot would otherwise clear the window's
+            // copy of the error.
+            let message = format!("Could not save the meeting: {e}");
+            st.live.lock().expect("live lock").warning = Some(message.clone());
             st.emit_state(app);
+            let _ = app.emit(MEETING_EVENT, UiEvent::Warning { message });
             windows::focus_for_typing(app, true);
             Err(e.to_string())
         }
