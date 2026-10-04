@@ -46,9 +46,8 @@ const COMMANDS: &[&str] = &[
 fn main() {
     // The page must come from the app itself: a release build without `custom-protocol` loads
     // `devUrl` (http://localhost:5173), and whatever serves that port would drive the app.
-    if std::env::var("PROFILE").as_deref() == Ok("release")
-        && std::env::var_os("CARGO_FEATURE_CUSTOM_PROTOCOL").is_none()
-    {
+    // `is_dev()` is true when `tauri` is built without it (`tauri build` turns it on).
+    if std::env::var("PROFILE").as_deref() == Ok("release") && tauri_build::is_dev() {
         panic!("release builds need the `custom-protocol` feature; build with `npm run tauri build`");
     }
     tauri_build::try_build(
