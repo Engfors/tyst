@@ -8,8 +8,7 @@
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
 
-use objc2::MainThreadMarker;
-use objc2_app_kit::{NSApplication, NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
+use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
 use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventTapLocation};
 
 use crate::DesktopError;
@@ -35,14 +34,6 @@ pub fn activate_app(pid: i32) -> bool {
         std::thread::sleep(Duration::from_millis(10));
     }
     true
-}
-
-/// Gives up being the active app, so the app that was in front before (the meeting app) gets the
-/// keyboard back. Must run on the main thread.
-pub fn deactivate() {
-    if let Some(mtm) = MainThreadMarker::new() {
-        NSApplication::sharedApplication(mtm).deactivate();
-    }
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]

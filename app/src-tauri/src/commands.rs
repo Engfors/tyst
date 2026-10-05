@@ -73,9 +73,10 @@ pub fn meeting_window_hide(app: AppHandle) {
 
 /// After a click in the meeting window: on macOS the click made Tyst the active app, which takes
 /// the keyboard from the meeting app (SPEC 8.1), so hand it back. Not while naming the meeting.
+/// Async, so waiting for the other app to come to the front does not block the main thread.
 #[tauri::command]
-pub fn meeting_window_give_back_focus(app: AppHandle) {
-    windows::give_back_focus(&app);
+pub async fn meeting_window_give_back_focus(app: AppHandle) {
+    let _ = tauri::async_runtime::spawn_blocking(move || windows::give_back_focus(&app)).await;
 }
 
 #[tauri::command]

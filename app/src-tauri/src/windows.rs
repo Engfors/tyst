@@ -165,17 +165,43 @@ pub fn focus_for_typing(app: &AppHandle, on: bool) {
     }
 }
 
+/// macOS: the app that was last in front other than Tyst (0: none yet).
+#[cfg(target_os = "macos")]
+static LAST_OTHER_APP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// macOS: keeps [`LAST_OTHER_APP`] current, so a click in the meeting window can hand the
+/// keyboard back to the meeting app.
+#[cfg(target_os = "macos")]
+pub fn track_front_app() {
+    let own = std::process::id() as i32;
+    let _ = std::thread::Builder::new().name("front-app".into()).spawn(move || {
+        loop {
+            if let Some(pid) = tyst_platform::macos_input::frontmost_app()
+                && pid != own
+            {
+                LAST_OTHER_APP.store(pid, Ordering::Relaxed);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    });
+}
+
 /// macOS: a click in the meeting window activates Tyst even though the window cannot take
-/// focus, and the meeting app loses the keyboard until it is clicked again. Deactivating Tyst
-/// gives the keyboard back to the app that was in front. Elsewhere the window rule (KDE) or the
+/// focus, and the meeting app loses the keyboard until it is clicked again. Bringing the app that
+/// was in front back gives it the keyboard again. Elsewhere the window rule (KDE) or the
 /// non-focusable window already keeps focus where it was.
 pub fn give_back_focus(app: &AppHandle) {
     if MEETING_TYPING.load(Ordering::Relaxed) {
         return;
     }
     #[cfg(target_os = "macos")]
-    let _ = app.run_on_main_thread(tyst_platform::macos_input::deactivate);
-    #[cfg(not(target_os = "macos"))]
+    {
+        let pid = LAST_OTHER_APP.load(Ordering::Relaxed);
+        log::info!("meeting window clicked, giving focus back to process {pid}");
+        if pid > 0 && !tyst_platform::macos_input::activate_app(pid) {
+            log::info!("the app that was in front is gone");
+        }
+    }
     let _ = app;
 }
 

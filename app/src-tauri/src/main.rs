@@ -122,6 +122,8 @@ fn main() {
             let handle = app.handle().clone();
             dictation::init(&handle);
             tray::build(&handle)?;
+            #[cfg(target_os = "macos")]
+            windows::track_front_app();
             #[cfg(target_os = "linux")]
             if let Err(e) = kwin::install_rule() {
                 log::warn!("KWin rule: {e}");
