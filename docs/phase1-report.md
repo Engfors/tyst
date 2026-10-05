@@ -1,6 +1,7 @@
 # Phase 1 report: core pipeline and CLI
 
-- **Status:** All Phase 1 targets met on the owner's machine (section 4); awaiting the owner's acceptance.
+- **Status:** Accepted by the owner on 2026-10-02 (PR #2), after all Phase 1 targets were met on the
+  owner's machine (section 4).
 - **Code:** `crates/tyst-core`, `crates/tyst-platform`, `crates/tyst-cli` · **CI:** `.github/workflows/ci.yml`
 
 ## 1. What exists
