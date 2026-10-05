@@ -26,6 +26,7 @@ const COMMANDS: &[&str] = &[
     "meeting_stop",
     "meeting_toggle_pause",
     "meeting_window_compact",
+    "meeting_window_give_back_focus",
     "meeting_window_hide",
     "models_cancel",
     "models_fetch",

@@ -377,7 +377,12 @@ fn begin(app: &AppHandle, cfg: &Config, dir: PathBuf, generation: u64) -> Result
     srcs.push((Channel::Me, mic));
     let mut warning = None;
     if cfg.meetings.system_audio {
-        match sources::system_audio() {
+        let others = if cfg.meetings.only_meeting_apps && sources::FILTERS_APPS {
+            sources::meeting_apps_audio(cfg.meetings.detect_apps.clone())
+        } else {
+            sources::system_audio()
+        };
+        match others {
             Some(s) => srcs.push((Channel::Others, s)),
             None => {
                 warning = Some("System audio capture is not available on this platform yet; recording Me only.".into())

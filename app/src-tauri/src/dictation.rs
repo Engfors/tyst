@@ -542,7 +542,9 @@ impl Ctl {
                 self.text = text;
                 if pasted != Pasted::Typed {
                     let key = if cfg!(target_os = "macos") { "Cmd+V" } else { "Ctrl+V" };
-                    self.message = Some(if pasted == Pasted::Denied {
+                    self.message = Some(if pasted == Pasted::Denied && cfg!(target_os = "macos") {
+                        "Allow Tyst under Accessibility to paste. Copied; press Cmd+V to paste.".to_string()
+                    } else if pasted == Pasted::Denied {
                         format!("Paste permission denied. Copied; press {key} to paste.")
                     } else {
                         format!("Copied. Press {key} to paste.")

@@ -71,6 +71,14 @@ pub fn meeting_window_hide(app: AppHandle) {
     windows::hide_meeting(&app);
 }
 
+/// After a click in the meeting window: on macOS the click made Tyst the active app, which takes
+/// the keyboard from the meeting app (SPEC 8.1), so hand it back. Not while naming the meeting.
+/// Async, so waiting for the other app to come to the front does not block the main thread.
+#[tauri::command]
+pub async fn meeting_window_give_back_focus(app: AppHandle) {
+    let _ = tauri::async_runtime::spawn_blocking(move || windows::give_back_focus(&app)).await;
+}
+
 #[tauri::command]
 pub fn meeting_window_compact(app: AppHandle, compact: bool) {
     windows::set_compact(&app, compact);
@@ -145,6 +153,8 @@ pub struct ConfigView {
     pub default_models_dir: String,
     pub system_audio_supported: bool,
     pub detect_supported: bool,
+    /// Others can be limited to meeting apps (macOS).
+    pub app_filter_supported: bool,
     pub version: String,
     pub platform: &'static str,
 }
@@ -161,6 +171,7 @@ pub fn config_get(app: AppHandle) -> ConfigView {
         default_models_dir: tyst_core::models::default_models_dir().display().to_string(),
         system_audio_supported: crate::sources::system_audio().is_some(),
         detect_supported: crate::detect::SUPPORTED,
+        app_filter_supported: crate::sources::FILTERS_APPS,
         version: env!("CARGO_PKG_VERSION").into(),
         platform: std::env::consts::OS,
     }

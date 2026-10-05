@@ -126,6 +126,7 @@ export interface Config {
   models_idle_minutes: number;
   meetings: {
     system_audio: boolean;
+    only_meeting_apps: boolean;
     echo_cancellation: boolean;
     show_window_on_start: boolean;
     compact: boolean;
@@ -164,6 +165,7 @@ export interface ConfigView {
   default_models_dir: string;
   system_audio_supported: boolean;
   detect_supported: boolean;
+  app_filter_supported: boolean;
   version: string;
   platform: string;
 }
@@ -198,6 +200,7 @@ export const api = {
   save: (title: string | null) => invoke<string>("meeting_save", { title }),
   hide: () => invoke<void>("meeting_window_hide"),
   compact: (compact: boolean) => invoke<void>("meeting_window_compact", { compact }),
+  giveBackFocus: () => invoke<void>("meeting_window_give_back_focus"),
   openPath: (path: string) => invoke<void>("open_path", { path }),
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),
   openTranscripts: () => invoke<void>("open_transcripts_folder"),

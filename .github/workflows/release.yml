@@ -129,6 +129,9 @@ jobs:
         run: |
           app=target/release/bundle/macos/Tyst.app
           codesign --verify --deep --strict "$app"
+          # Hardened runtime without this entitlement denies the microphone without asking.
+          codesign -d --entitlements - --xml "$app" | grep -q com.apple.security.device.audio-input \
+            || { echo "the microphone entitlement is missing"; exit 1; }
           if find "$app" -iname '*.onnx' | grep -q .; then echo "model files in the app"; exit 1; fi
           ls -l target/release/bundle/dmg/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

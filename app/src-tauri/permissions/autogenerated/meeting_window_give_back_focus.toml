@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-meeting-window-give-back-focus"
+description = "Enables the meeting_window_give_back_focus command without any pre-configured scope."
+commands.allow = ["meeting_window_give_back_focus"]
+
+[[permission]]
+identifier = "deny-meeting-window-give-back-focus"
+description = "Denies the meeting_window_give_back_focus command without any pre-configured scope."
+commands.deny = ["meeting_window_give_back_focus"]

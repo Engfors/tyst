@@ -16,6 +16,7 @@
     "allow-meeting-stop",
     "allow-meeting-toggle-pause",
     "allow-meeting-window-compact",
+    "allow-meeting-window-give-back-focus",
     "allow-meeting-window-hide",
     "allow-open-path",
     "allow-reveal-path"

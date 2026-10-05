@@ -16,6 +16,8 @@ Meetings
   twice. Turn it off in Settings › Meetings.
 - Optional meeting detection: when Teams, Zoom, a browser or another listed app starts using the
   microphone, Tyst asks whether to transcribe. Off by default; it never starts on its own.
+- On macOS, Others hears only the meeting apps listed in Settings › Meetings, so music or a video
+  in another app stays out of the transcript. On by default; turn it off to record all system audio.
 - A journal survives crashes: after an interrupted meeting, Tyst offers to recover it on the next
   start (`tyst-cli recover` does the same from the command line).
 
@@ -31,8 +33,8 @@ Speech recognition
 Platforms
 - Linux: a signed AppImage (x86_64, glibc 2.39 or newer), tested on Arch with KDE Plasma (Wayland)
   and PipeWire.
-- macOS 14.4 or newer: an ad-hoc signed DMG (Apple silicon). Not yet tested on a real Mac; right-click
-  and Open on first start.
+- macOS 14.4 or newer: an ad-hoc signed DMG (Apple silicon), tested on an M1 Max. Allow it under
+  Privacy & Security › Open Anyway on first start.
 
 Also included
 - `tyst-cli` (build from source) for transcribing files, live and meeting sessions without the app,

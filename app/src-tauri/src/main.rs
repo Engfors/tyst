@@ -76,6 +76,7 @@ fn main() {
             commands::meeting_save,
             commands::meeting_window_hide,
             commands::meeting_window_compact,
+            commands::meeting_window_give_back_focus,
             commands::open_path,
             commands::reveal_path,
             commands::open_transcripts_folder,
@@ -121,6 +122,8 @@ fn main() {
             let handle = app.handle().clone();
             dictation::init(&handle);
             tray::build(&handle)?;
+            #[cfg(target_os = "macos")]
+            windows::track_front_app();
             #[cfg(target_os = "linux")]
             if let Err(e) = kwin::install_rule() {
                 log::warn!("KWin rule: {e}");

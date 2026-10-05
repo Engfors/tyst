@@ -279,6 +279,11 @@ impl Desktop {
 
     #[cfg(target_os = "macos")]
     async fn keystroke(&self, _terminal: bool, token: Option<String>) -> (Pasted, Option<String>) {
+        // Asks macOS to show its Accessibility dialog when the answer is no.
+        if !tyst_platform::macos_input::trusted(true) {
+            log::warn!("paste: no Accessibility permission");
+            return (Pasted::Denied, token);
+        }
         match tyst_platform::macos_input::paste() {
             Ok(()) => (Pasted::Typed, token),
             Err(e) => {
