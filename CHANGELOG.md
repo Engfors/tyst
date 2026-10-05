@@ -35,6 +35,7 @@ Platforms
   and Open on first start.
 
 Also included
-- `tyst-cli` for transcribing files, live and meeting sessions without the app, benchmarks and models.
+- `tyst-cli` (build from source) for transcribing files, live and meeting sessions without the app,
+  benchmarks and models.
 - An update notice in the tray and Settings › Updates. It never downloads or installs anything.
 - Downloads come with SHA256SUMS signed by the Tyst release key (`tyst-release-key.asc`).
