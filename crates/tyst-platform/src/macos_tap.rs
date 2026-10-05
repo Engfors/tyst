@@ -2,8 +2,9 @@
 //! global, mono tap of every process's output, inside a private aggregate device whose clock is
 //! the default output device. Needs `NSAudioCaptureUsageDescription`; macOS asks the user once.
 //!
-//! When the default output changes (headphones plugged in), [`SystemAudioTap::poll`] rebuilds the
-//! aggregate device on the new output, so the session keeps running.
+//! When the default output changes (headphones plugged in), or its sample rate does (Bluetooth
+//! headphones drop to 16 or 24 kHz while their microphone is in use), [`SystemAudioTap::poll`]
+//! rebuilds the aggregate device, so the session keeps running.
 
 use std::ffi::{CStr, c_void};
 use std::ptr::NonNull;
@@ -20,9 +21,10 @@ use objc2_core_audio::{
     AudioObjectPropertyAddress, CATapDescription, kAudioAggregateDeviceIsPrivateKey, kAudioAggregateDeviceIsStackedKey,
     kAudioAggregateDeviceMainSubDeviceKey, kAudioAggregateDeviceNameKey, kAudioAggregateDeviceSubDeviceListKey,
     kAudioAggregateDeviceTapAutoStartKey, kAudioAggregateDeviceTapListKey, kAudioAggregateDeviceUIDKey,
-    kAudioDevicePropertyDeviceUID, kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioObjectPropertyElementMain,
-    kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject, kAudioSubDeviceUIDKey, kAudioSubTapDriftCompensationKey,
-    kAudioSubTapUIDKey, kAudioTapPropertyFormat,
+    kAudioDevicePropertyDeviceUID, kAudioDevicePropertyNominalSampleRate,
+    kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal,
+    kAudioObjectSystemObject, kAudioSubDeviceUIDKey, kAudioSubTapDriftCompensationKey, kAudioSubTapUIDKey,
+    kAudioTapPropertyFormat,
 };
 use objc2_core_audio_types::{AudioBuffer, AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp};
 use objc2_core_foundation::CFDictionary;
@@ -43,6 +45,7 @@ struct Running {
     proc_id: AudioDeviceIOProcID,
     ctx: *mut Ctx,
     output_uid: String,
+    rate: u32,
 }
 
 pub struct SystemAudioTap {
@@ -132,6 +135,14 @@ fn default_output_uid() -> Result<String, CaptureError> {
         let uid = Retained::from_raw(uid).ok_or(CaptureError::NoDevice)?;
         Ok(uid.to_string())
     }
+}
+
+/// The rate the aggregate device runs at, which is the rate of the frames the IO proc gets. It
+/// follows the main sub-device (the output), not the tap's own format: AirPods in headset mode
+/// run at 24 kHz while the tap still reports 48 kHz.
+fn nominal_rate(device: AudioObjectID) -> Option<u32> {
+    let rate: f64 = unsafe { get(device, kAudioDevicePropertyNominalSampleRate, 0.0) }.ok()?;
+    (rate >= 1.0).then_some(rate.round() as u32)
 }
 
 fn key(k: &CStr) -> Retained<NSString> {
@@ -233,11 +244,9 @@ impl SystemAudioTap {
                 return Err(e);
             }
 
-            let ctx = Box::into_raw(Box::new(Ctx {
-                sink,
-                rate: format.mSampleRate as u32,
-                channels: format.mChannelsPerFrame as usize,
-            }));
+            let tap_rate = format.mSampleRate as u32;
+            let rate = nominal_rate(aggregate).unwrap_or(tap_rate);
+            let ctx = Box::into_raw(Box::new(Ctx { sink, rate, channels: format.mChannelsPerFrame as usize }));
             let mut proc_id: AudioDeviceIOProcID = None;
             let created = check(
                 AudioDeviceCreateIOProcID(aggregate, Some(io_proc), ctx.cast(), NonNull::from(&mut proc_id)),
@@ -253,9 +262,12 @@ impl SystemAudioTap {
                 drop(Box::from_raw(ctx));
                 return Err(e);
             }
-            self.rate = format.mSampleRate as u32;
-            log::info!("system audio tap started: {} Hz, {} channel(s)", format.mSampleRate, format.mChannelsPerFrame);
-            self.running = Some(Running { tap, aggregate, proc_id, ctx, output_uid });
+            self.rate = rate;
+            log::info!(
+                "system audio tap started: {rate} Hz (tap format {tap_rate} Hz), {} channel(s)",
+                format.mChannelsPerFrame
+            );
+            self.running = Some(Running { tap, aggregate, proc_id, ctx, output_uid, rate });
         }
         Ok(())
     }
@@ -294,12 +306,16 @@ impl AudioSource for SystemAudioTap {
         "Core Audio process tap (all apps)".into()
     }
 
-    /// Follows the default output device.
+    /// Follows the default output device and its sample rate.
     fn poll(&mut self) -> Result<(), CaptureError> {
         let Some(r) = &self.running else { return Ok(()) };
         let Ok(uid) = default_output_uid() else { return Ok(()) };
-        if uid != r.output_uid {
-            log::info!("default output changed, rebuilding the system audio tap");
+        let rate_changed = nominal_rate(r.aggregate).is_some_and(|rate| rate != r.rate);
+        if uid != r.output_uid || rate_changed {
+            log::info!(
+                "default output {}, rebuilding the system audio tap",
+                if uid != r.output_uid { "changed" } else { "changed its sample rate" }
+            );
             let sink = self.sink.clone().ok_or(CaptureError::NoDevice)?;
             self.teardown();
             self.build(sink)?;
