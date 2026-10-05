@@ -22,3 +22,6 @@ target/
 
 # Tauri app
 app/src-tauri/gen/
+
+# Python packages (a stray wheel was once committed by accident)
+*.whl
