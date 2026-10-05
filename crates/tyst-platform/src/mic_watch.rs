@@ -23,18 +23,24 @@ impl MicUser {
     /// Whether this app matches one of `apps` (case-insensitive, part of the name or binary:
     /// `teams` matches `teams-for-linux` and `com.microsoft.teams2`).
     pub fn matches(&self, apps: &[String]) -> bool {
-        let name = self.name.to_lowercase();
-        let binary = self.binary.to_lowercase();
-        apps.iter()
-            .map(|a| a.trim().to_lowercase())
-            .filter(|a| !a.is_empty())
-            .any(|a| name.contains(&a) || binary.contains(&a))
+        app_matches(&self.name, apps) || app_matches(&self.binary, apps)
     }
 
     /// The name to show: "Firefox", "Microsoft Teams", or the binary.
     pub fn display_name(&self) -> &str {
         if self.name.trim().is_empty() { &self.binary } else { &self.name }
     }
+}
+
+/// Whether an app name, binary or bundle id matches one of `apps` (case-insensitive, part of the
+/// name). Safari plays and records through WebKit's own processes (`com.apple.WebKit.GPU`), so
+/// those count as `safari`.
+pub fn app_matches(id: &str, apps: &[String]) -> bool {
+    let id = id.to_lowercase();
+    apps.iter()
+        .map(|a| a.trim().to_lowercase())
+        .filter(|a| !a.is_empty())
+        .any(|a| id.contains(&a) || (a == "safari" && id.starts_with("com.apple.webkit")))
 }
 
 /// The apps the setting starts with: meeting clients, and browsers (a browser using the
@@ -201,16 +207,14 @@ mod linux {
 
 #[cfg(all(target_os = "macos", feature = "macos-tap"))]
 mod macos {
-    use objc2::rc::Retained;
     use objc2_core_audio::{
         AudioObjectID, kAudioHardwarePropertyProcessObjectList, kAudioObjectSystemObject,
-        kAudioProcessPropertyBundleID, kAudioProcessPropertyIsRunningInput, kAudioProcessPropertyPID,
+        kAudioProcessPropertyIsRunningInput, kAudioProcessPropertyPID,
     };
-    use objc2_foundation::NSString;
 
     use super::MicUser;
     use crate::CaptureError;
-    use crate::macos_tap::{get, get_array};
+    use crate::macos_tap::{bundle_id, get, get_array};
 
     /// Asks Core Audio on every call (cheap: a handful of properties per process).
     pub struct MicWatcher;
@@ -246,8 +250,7 @@ mod macos {
                 if pid == own {
                     continue;
                 }
-                let bundle: *mut NSString = get(object, kAudioProcessPropertyBundleID, std::ptr::null_mut())?;
-                let bundle = Retained::from_raw(bundle).map(|s| s.to_string()).unwrap_or_default();
+                let bundle = bundle_id(object).unwrap_or_default();
                 users.push(MicUser { id: object as u64, name: bundle.clone(), binary: bundle });
             }
         }
@@ -265,6 +268,8 @@ mod tests {
         let user = |name: &str, binary: &str| MicUser { id: 1, name: name.into(), binary: binary.into() };
         assert!(user("teams-for-linux", "teams-for-linux").matches(&apps));
         assert!(user("com.microsoft.teams2", "com.microsoft.teams2").matches(&apps));
+        assert!(user("com.apple.WebKit.GPU", "com.apple.WebKit.GPU").matches(&apps));
+        assert!(!user("com.apple.WebKit.GPU", "com.apple.WebKit.GPU").matches(&["teams".to_string()]));
         assert!(user("Firefox", "firefox").matches(&apps));
         assert!(user("Google Chrome", "chrome").matches(&apps));
         assert!(user("", "zoom").matches(&apps));

@@ -2,6 +2,11 @@
 //! global, mono tap of every process's output, inside a private aggregate device whose clock is
 //! the default output device. Needs `NSAudioCaptureUsageDescription`; macOS asks the user once.
 //!
+//! With an app list ([`SystemAudioTap::only_apps`], SPEC 15 q7) the tap mixes only the processes
+//! whose bundle id matches the list, so music and notification sounds stay out of Others. Apps
+//! that start or quit while recording are picked up by the next [`SystemAudioTap::poll`]; while
+//! none runs, Others is silent.
+//!
 //! When the default output changes (headphones plugged in), or its sample rate does (Bluetooth
 //! headphones drop to 16 or 24 kHz while their microphone is in use), [`SystemAudioTap::poll`]
 //! rebuilds the aggregate device, so the session keeps running.
@@ -22,14 +27,16 @@ use objc2_core_audio::{
     kAudioAggregateDeviceMainSubDeviceKey, kAudioAggregateDeviceNameKey, kAudioAggregateDeviceSubDeviceListKey,
     kAudioAggregateDeviceTapAutoStartKey, kAudioAggregateDeviceTapListKey, kAudioAggregateDeviceUIDKey,
     kAudioDevicePropertyDeviceUID, kAudioDevicePropertyNominalSampleRate,
-    kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal,
-    kAudioObjectSystemObject, kAudioSubDeviceUIDKey, kAudioSubTapDriftCompensationKey, kAudioSubTapUIDKey,
-    kAudioTapPropertyFormat,
+    kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioHardwarePropertyProcessObjectList,
+    kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
+    kAudioProcessPropertyBundleID, kAudioProcessPropertyPID, kAudioSubDeviceUIDKey, kAudioSubTapDriftCompensationKey,
+    kAudioSubTapUIDKey, kAudioTapPropertyFormat,
 };
 use objc2_core_audio_types::{AudioBuffer, AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp};
 use objc2_core_foundation::CFDictionary;
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUUID};
 
+use crate::mic_watch::app_matches;
 use crate::{AudioChunk, AudioSource, CaptureError, Channel};
 
 /// Everything the IO callback needs; boxed so its address is stable.
@@ -52,11 +59,21 @@ pub struct SystemAudioTap {
     running: Option<Running>,
     sink: Option<Sender<AudioChunk>>,
     rate: u32,
+    /// Only these apps (`None`: every app).
+    apps: Option<Vec<String>>,
+    /// The process objects in the current tap (with an app list), sorted.
+    processes: Vec<AudioObjectID>,
 }
 
 impl SystemAudioTap {
+    /// Every app's output.
     pub fn new() -> Self {
-        Self { running: None, sink: None, rate: 0 }
+        Self { running: None, sink: None, rate: 0, apps: None, processes: Vec::new() }
+    }
+
+    /// Only the output of apps matching `apps` (part of the bundle id, as in meeting detection).
+    pub fn only_apps(apps: Vec<String>) -> Self {
+        Self { running: None, sink: None, rate: 0, apps: Some(apps), processes: Vec::new() }
     }
 }
 
@@ -145,6 +162,35 @@ fn nominal_rate(device: AudioObjectID) -> Option<u32> {
     (rate >= 1.0).then_some(rate.round() as u32)
 }
 
+/// A Core Audio process object's bundle id.
+pub(crate) fn bundle_id(object: AudioObjectID) -> Option<String> {
+    unsafe {
+        let bundle: *mut NSString = get(object, kAudioProcessPropertyBundleID, std::ptr::null_mut()).ok()?;
+        Retained::from_raw(bundle).map(|s| s.to_string())
+    }
+}
+
+/// Process objects (other than Tyst) whose bundle id matches `apps`, sorted.
+fn matching_processes(apps: &[String]) -> Vec<AudioObjectID> {
+    let own = std::process::id() as i32;
+    let objects: Vec<AudioObjectID> = match unsafe {
+        get_array(kAudioObjectSystemObject as AudioObjectID, kAudioHardwarePropertyProcessObjectList)
+    } {
+        Ok(o) => o,
+        Err(e) => {
+            log::warn!("audio processes: {e}");
+            return Vec::new();
+        }
+    };
+    let mut found: Vec<AudioObjectID> = objects
+        .into_iter()
+        .filter(|&o| unsafe { get(o, kAudioProcessPropertyPID, -1i32) }.unwrap_or(-1) != own)
+        .filter(|&o| bundle_id(o).is_some_and(|b| app_matches(&b, apps)))
+        .collect();
+    found.sort_unstable();
+    found
+}
+
 fn key(k: &CStr) -> Retained<NSString> {
     NSString::from_str(k.to_str().expect("Core Audio keys are ASCII"))
 }
@@ -203,9 +249,26 @@ unsafe extern "C-unwind" fn io_proc(
 impl SystemAudioTap {
     fn build(&mut self, sink: Sender<AudioChunk>) -> Result<(), CaptureError> {
         let output_uid = default_output_uid()?;
+        if let Some(apps) = &self.apps {
+            self.processes = matching_processes(apps);
+            if self.processes.is_empty() {
+                log::info!("system audio: no meeting app is running, Others waits for one");
+                return Ok(());
+            }
+            let names: Vec<String> = self.processes.iter().filter_map(|&p| bundle_id(p)).collect();
+            log::info!("system audio: only meeting apps: {}", names.join(", "));
+        }
         unsafe {
-            let empty: Retained<NSArray<NSNumber>> = NSArray::new();
-            let desc = CATapDescription::initMonoGlobalTapButExcludeProcesses(CATapDescription::alloc(), &empty);
+            let desc = if self.apps.is_some() {
+                let ids: Vec<Retained<NSNumber>> = self.processes.iter().map(|&p| NSNumber::new_u32(p)).collect();
+                CATapDescription::initMonoMixdownOfProcesses(
+                    CATapDescription::alloc(),
+                    &NSArray::from_retained_slice(&ids),
+                )
+            } else {
+                let empty: Retained<NSArray<NSNumber>> = NSArray::new();
+                CATapDescription::initMonoGlobalTapButExcludeProcesses(CATapDescription::alloc(), &empty)
+            };
             desc.setName(&NSString::from_str("Tyst system audio"));
             desc.setPrivate(true);
             let tap_uuid = desc.UUID().UUIDString();
@@ -295,6 +358,7 @@ impl AudioSource for SystemAudioTap {
 
     fn stop(&mut self) -> Result<(), CaptureError> {
         self.teardown();
+        self.sink = None;
         Ok(())
     }
 
@@ -303,11 +367,25 @@ impl AudioSource for SystemAudioTap {
     }
 
     fn device_name(&self) -> String {
-        "Core Audio process tap (all apps)".into()
+        if self.apps.is_some() {
+            "Core Audio process tap (meeting apps)".into()
+        } else {
+            "Core Audio process tap (all apps)".into()
+        }
     }
 
-    /// Follows the default output device and its sample rate.
+    /// Follows the default output device and its sample rate, and (with an app list) the meeting
+    /// apps that start or quit.
     fn poll(&mut self) -> Result<(), CaptureError> {
+        if let Some(apps) = &self.apps
+            && self.sink.is_some()
+            && matching_processes(apps) != self.processes
+        {
+            log::info!("meeting apps changed, rebuilding the system audio tap");
+            let sink = self.sink.clone().ok_or(CaptureError::NoDevice)?;
+            self.teardown();
+            return self.build(sink);
+        }
         let Some(r) = &self.running else { return Ok(()) };
         let Ok(uid) = default_output_uid() else { return Ok(()) };
         let rate_changed = nominal_rate(r.aggregate).is_some_and(|rate| rate != r.rate);

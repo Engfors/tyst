@@ -145,6 +145,8 @@ pub struct ConfigView {
     pub default_models_dir: String,
     pub system_audio_supported: bool,
     pub detect_supported: bool,
+    /// Others can be limited to meeting apps (macOS).
+    pub app_filter_supported: bool,
     pub version: String,
     pub platform: &'static str,
 }
@@ -161,6 +163,7 @@ pub fn config_get(app: AppHandle) -> ConfigView {
         default_models_dir: tyst_core::models::default_models_dir().display().to_string(),
         system_audio_supported: crate::sources::system_audio().is_some(),
         detect_supported: crate::detect::SUPPORTED,
+        app_filter_supported: crate::sources::FILTERS_APPS,
         version: env!("CARGO_PKG_VERSION").into(),
         platform: std::env::consts::OS,
     }

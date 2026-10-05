@@ -126,6 +126,7 @@ export interface Config {
   models_idle_minutes: number;
   meetings: {
     system_audio: boolean;
+    only_meeting_apps: boolean;
     echo_cancellation: boolean;
     show_window_on_start: boolean;
     compact: boolean;
@@ -164,6 +165,7 @@ export interface ConfigView {
   default_models_dir: string;
   system_audio_supported: boolean;
   detect_supported: boolean;
+  app_filter_supported: boolean;
   version: string;
   platform: string;
 }

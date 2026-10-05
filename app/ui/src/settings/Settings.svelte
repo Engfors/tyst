@@ -269,6 +269,12 @@
           Transcribe system audio as “{c.labels.others}”
           {#if !view.system_audio_supported}<span class="muted">(not available on this platform yet)</span>{/if}
         </label>
+        {#if view.app_filter_supported}
+          <label class="check">
+            <input type="checkbox" bind:checked={c.meetings.only_meeting_apps} onchange={save} disabled={!c.meetings.system_audio} />
+            Only from meeting apps (leaves out music and notification sounds)
+          </label>
+        {/if}
         <label class="check">
           <input type="checkbox" bind:checked={c.meetings.echo_cancellation} onchange={save} disabled={!c.meetings.system_audio} />
           Remove the others' voices from your microphone (echo cancellation, for meetings on speakers)
@@ -277,13 +283,13 @@
         <label class="check"><input type="checkbox" bind:checked={c.meetings.compact} onchange={save} /> Compact one-line window</label>
         {#if view.detect_supported}
           <label class="check"><input type="checkbox" bind:checked={c.meetings.detect} onchange={save} /> Ask to transcribe when a meeting app starts using the microphone</label>
-          {#if c.meetings.detect}
-            <div class="field">
-              <span class="name">Meeting apps</span>
-              <textarea class="mono" rows="4" bind:value={meetingApps} onchange={saveMeetingApps}></textarea>
-              <span class="muted small">One per line, matched against part of the app's name (a browser using the microphone is probably a web meeting). Tyst only asks; it never records without your answer.</span>
-            </div>
-          {/if}
+        {/if}
+        {#if (view.detect_supported && c.meetings.detect) || (view.app_filter_supported && c.meetings.only_meeting_apps)}
+          <div class="field">
+            <span class="name">Meeting apps</span>
+            <textarea class="mono" rows="4" bind:value={meetingApps} onchange={saveMeetingApps}></textarea>
+            <span class="muted small">One per line, matched against part of the app's name (a browser is probably a web meeting).{#if c.meetings.detect} Tyst only asks; it never records without your answer.{/if}{#if view.app_filter_supported && c.meetings.only_meeting_apps} “{c.labels.others}” records only these apps; add an app here if its sound is missing.{/if}</span>
+          </div>
         {/if}
         <div class="field">
           <span class="name">Name prompt</span>

@@ -26,6 +26,21 @@ pub fn system_audio() -> Option<SourceFactory> {
     None
 }
 
+/// System audio from the apps in `apps` only (SPEC 15 q7), where this build can filter by app
+/// (macOS); elsewhere every app, like [`system_audio`].
+pub fn meeting_apps_audio(apps: Vec<String>) -> Option<SourceFactory> {
+    #[cfg(all(target_os = "macos", feature = "macos-tap"))]
+    return Some(Box::new(move || Ok(Box::new(tyst_platform::macos_tap::SystemAudioTap::only_apps(apps)) as _)));
+    #[allow(unreachable_code)]
+    {
+        let _ = apps;
+        system_audio()
+    }
+}
+
+/// Whether [`meeting_apps_audio`] really filters on this build.
+pub const FILTERS_APPS: bool = cfg!(all(target_os = "macos", feature = "macos-tap"));
+
 pub fn source(channel: Channel) -> Option<SourceFactory> {
     match channel {
         Channel::Me => microphone(),

@@ -53,6 +53,9 @@ impl Default for UpdateSettings {
 pub struct MeetingSettings {
     /// Capture system audio as Others (off: Me only).
     pub system_audio: bool,
+    /// macOS: Others records only the apps in `detect_apps` (SPEC 15 q7, on by default), so music
+    /// and notification sounds stay out of the transcript.
+    pub only_meeting_apps: bool,
     /// Remove the system audio's echo from the microphone (SPEC 6.4), for meetings on speakers.
     pub echo_cancellation: bool,
     /// Show the meeting window when recording starts.
@@ -65,7 +68,8 @@ pub struct MeetingSettings {
     pub window: BTreeMap<String, WindowGeometry>,
     /// Ask to transcribe when a meeting app starts using the microphone (SPEC 9.4, off by default).
     pub detect: bool,
-    /// Apps that count as meetings, matched against part of the app's name or binary.
+    /// Apps that count as meetings, matched against part of the app's name or binary (or bundle
+    /// id): for meeting detection, and on macOS for `only_meeting_apps`.
     pub detect_apps: Vec<String>,
     /// KDE: the meeting window's top-left corner in KWin's global coordinates, read through a
     /// KWin script when the window hides (Wayland clients cannot read or set their position).
@@ -187,6 +191,7 @@ impl Default for MeetingSettings {
     fn default() -> Self {
         Self {
             system_audio: true,
+            only_meeting_apps: true,
             echo_cancellation: true,
             show_window_on_start: true,
             compact: false,
