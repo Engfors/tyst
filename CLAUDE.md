@@ -55,7 +55,8 @@ packaging/notices/generate.sh                             # THIRD_PARTY_NOTICES.
 ```
 
 `tyst-runtime`'s default `aec` feature builds WebRTC's echo canceller from source: it needs `meson`, `ninja` and
-a C++ compiler. A tag `vX.Y.Z` runs `.github/workflows/release.yml` (draft release, GPG-signed checksums).
+a C++ compiler. A tag `vX.Y.Z` runs `.github/workflows/release.yml` (draft release, GPG-signed checksums,
+notes from the `CHANGELOG.md` section for the version, which must exist).
 Actions are pinned to commit SHAs; keep them pinned when updating. `cargo audit` runs in CI (`.cargo/audit.toml`).
 
 Model tests in `crates/tyst-core/tests/models.rs` are `#[ignore]`d; run them with

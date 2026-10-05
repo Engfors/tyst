@@ -5,10 +5,10 @@ including mixed-language meetings. Nothing leaves the device: Tyst only goes onl
 to download the speech models and, if you leave update checks on, to ask GitHub for the latest
 version.
 
-Status: **Phase 5** (polish and release). Phases 0 to 4 are accepted; Linux is tested on Arch (KDE
-Plasma, Wayland, PipeWire), macOS testing is pending. See [SPEC.md](SPEC.md) for the specification and
-the phase reports: [5](docs/phase5-report.md) (echo cancellation, meeting detection, updates,
-releases), [4](docs/phase4-report.md) (AppImage), [3](docs/phase3-report.md) (dictation),
+Status: **v0.1.0**, the first release (see [CHANGELOG.md](CHANGELOG.md)). All phases are accepted on
+Linux, tested on Arch (KDE Plasma, Wayland, PipeWire); macOS testing is pending. See [SPEC.md](SPEC.md)
+for the specification and the phase reports: [5](docs/phase5-report.md) (echo cancellation, meeting
+detection, updates, releases), [4](docs/phase4-report.md) (AppImage), [3](docs/phase3-report.md) (dictation),
 [2](docs/phase2-report.md) (meeting app), [1](docs/phase1-report.md) (pipeline measurements) and
 [0](docs/phase0-report.md) (model evaluation).
 
@@ -95,9 +95,10 @@ packaging/linux/smoke-test-appimage.sh target/release/bundle/appimage/Tyst_*_amd
 
 CI builds the same AppImage on Ubuntu 24.04 for every change (artifact `tyst-appimage`, unsigned).
 A tag `vX.Y.Z` runs `.github/workflows/release.yml`, which builds the AppImage and the macOS app and
-DMG, signs them and opens a draft release. `NO_STRIP=true` is needed on Arch, whose libraries use ELF
-sections linuxdeploy's `strip` does not know. The AppImage needs glibc 2.39 or newer with a matching
-`libstdc++` (Arch is fine; Ubuntu 22.04 and Debian 12 are too old) and `fusermount3` (`fuse3`).
+DMG, signs them and opens a draft release with the `CHANGELOG.md` section for that version as its
+text. `NO_STRIP=true` is needed on Arch, whose libraries use ELF sections linuxdeploy's `strip`
+does not know. The AppImage needs glibc 2.39 or newer with a matching `libstdc++` (Arch is fine;
+Ubuntu 22.04 and Debian 12 are too old) and `fusermount3` (`fuse3`).
 Models are not bundled.
 
 ### macOS

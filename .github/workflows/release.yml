@@ -1,8 +1,9 @@
 name: Release
 
 # A tag `vX.Y.Z` builds the Linux AppImage and the macOS app, checksums and signs them and opens
-# a draft GitHub release with them (SPEC 12, Phase 5). Publishing the draft is a manual step, and
-# the update check (SPEC 9.7) only sees published releases.
+# a draft GitHub release with them (SPEC 12, Phase 5), its text taken from CHANGELOG.md.
+# Publishing the draft is a manual step, and the update check (SPEC 9.7) only sees published
+# releases.
 # Running the workflow by hand, or a pull request that changes the release workflow or the
 # packaging scripts, builds and signs everything as a dry run, without a release.
 #
@@ -46,6 +47,8 @@ jobs:
             echo "tag $REF_NAME does not match the workspace version $version"
             exit 1
           fi
+          # The CHANGELOG section is the release text; check it now rather than after the builds.
+          packaging/release-notes.sh "$version" >/dev/null
           echo "version=$version" >>"$GITHUB_OUTPUT"
 
   linux:
@@ -182,6 +185,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.version.outputs.version }}
-        run: >
-          gh release create "$TAG" dist/* --draft --verify-tag
-          --title "Tyst $VERSION" --generate-notes
+        run: |
+          packaging/release-notes.sh "$VERSION" >"$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" dist/* --draft --verify-tag \
+            --title "Tyst $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
