@@ -13,8 +13,9 @@
 
 use std::ffi::{CStr, c_void};
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use objc2::AnyThread;
 use objc2::rc::Retained;
@@ -44,7 +45,14 @@ struct Ctx {
     sink: Sender<AudioChunk>,
     rate: u32,
     channels: usize,
+    /// Any sample other than exact zero so far. Without the system audio permission the tap
+    /// delivers only zeros, and macOS never asks a process without `NSAudioCaptureUsageDescription`
+    /// (a terminal running `tyst-cli`).
+    heard: AtomicBool,
 }
+
+/// How long only zeros may arrive before [`SystemAudioTap::poll`] warns about the permission.
+const SILENCE_WARNING: Duration = Duration::from_secs(15);
 
 struct Running {
     tap: AudioObjectID,
@@ -53,6 +61,7 @@ struct Running {
     ctx: *mut Ctx,
     output_uid: String,
     rate: u32,
+    started: Instant,
 }
 
 pub struct SystemAudioTap {
@@ -63,17 +72,19 @@ pub struct SystemAudioTap {
     apps: Option<Vec<String>>,
     /// The process objects in the current tap (with an app list), sorted.
     processes: Vec<AudioObjectID>,
+    /// The digital-silence warning was given.
+    warned: bool,
 }
 
 impl SystemAudioTap {
     /// Every app's output.
     pub fn new() -> Self {
-        Self { running: None, sink: None, rate: 0, apps: None, processes: Vec::new() }
+        Self { running: None, sink: None, rate: 0, apps: None, processes: Vec::new(), warned: false }
     }
 
     /// Only the output of apps matching `apps` (part of the bundle id, as in meeting detection).
     pub fn only_apps(apps: Vec<String>) -> Self {
-        Self { running: None, sink: None, rate: 0, apps: Some(apps), processes: Vec::new() }
+        Self { running: None, sink: None, rate: 0, apps: Some(apps), processes: Vec::new(), warned: false }
     }
 }
 
@@ -236,6 +247,9 @@ unsafe extern "C-unwind" fn io_proc(
         }
     }
     if !mono.is_empty() {
+        if !ctx.heard.load(Ordering::Relaxed) && mono.iter().any(|&x| x != 0.0) {
+            ctx.heard.store(true, Ordering::Relaxed);
+        }
         let _ = ctx.sink.send(AudioChunk {
             channel: Channel::Others,
             sample_rate: ctx.rate,
@@ -309,7 +323,12 @@ impl SystemAudioTap {
 
             let tap_rate = format.mSampleRate as u32;
             let rate = nominal_rate(aggregate).unwrap_or(tap_rate);
-            let ctx = Box::into_raw(Box::new(Ctx { sink, rate, channels: format.mChannelsPerFrame as usize }));
+            let ctx = Box::into_raw(Box::new(Ctx {
+                sink,
+                rate,
+                channels: format.mChannelsPerFrame as usize,
+                heard: AtomicBool::new(false),
+            }));
             let mut proc_id: AudioDeviceIOProcID = None;
             let created = check(
                 AudioDeviceCreateIOProcID(aggregate, Some(io_proc), ctx.cast(), NonNull::from(&mut proc_id)),
@@ -330,7 +349,7 @@ impl SystemAudioTap {
                 "system audio tap started: {rate} Hz (tap format {tap_rate} Hz), {} channel(s)",
                 format.mChannelsPerFrame
             );
-            self.running = Some(Running { tap, aggregate, proc_id, ctx, output_uid, rate });
+            self.running = Some(Running { tap, aggregate, proc_id, ctx, output_uid, rate, started: Instant::now() });
         }
         Ok(())
     }
@@ -387,6 +406,17 @@ impl AudioSource for SystemAudioTap {
             return self.build(sink);
         }
         let Some(r) = &self.running else { return Ok(()) };
+        // The IO proc only reads `ctx` while the tap runs, and so does this.
+        let heard = unsafe { (*r.ctx).heard.load(Ordering::Relaxed) };
+        if !heard && !self.warned && r.started.elapsed() >= SILENCE_WARNING {
+            self.warned = true;
+            log::warn!(
+                "system audio has been silent for {} s: either nothing is playing, or macOS does not let this \
+                 app record system audio (System Settings › Privacy & Security › Screen & System Audio \
+                 Recording › System Audio Recording Only; for tyst-cli, add your terminal there)",
+                SILENCE_WARNING.as_secs()
+            );
+        }
         let Ok(uid) = default_output_uid() else { return Ok(()) };
         let rate_changed = nominal_rate(r.aggregate).is_some_and(|rate| rate != r.rate);
         if uid != r.output_uid || rate_changed {

@@ -33,6 +33,9 @@ pub const PILL_BOTTOM: f64 = 48.0;
 /// right after the call and the tray label would be computed from it.
 static MEETING_SHOWN: AtomicBool = AtomicBool::new(false);
 
+/// Whether the meeting window takes typing (the name prompt).
+static MEETING_TYPING: AtomicBool = AtomicBool::new(false);
+
 fn meeting_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     if let Some(w) = app.get_webview_window(MEETING) {
         return Ok(w);
@@ -154,11 +157,26 @@ pub fn toggle_meeting(app: &AppHandle) {
 /// Lets the meeting window take focus for the name prompt (SPEC 8.3, the one explicit exception
 /// to "never steal focus"), and gives it back afterwards.
 pub fn focus_for_typing(app: &AppHandle, on: bool) {
+    MEETING_TYPING.store(on, Ordering::Relaxed);
     let Some(w) = app.get_webview_window(MEETING) else { return };
     let _ = w.set_focusable(on);
     if on {
         let _ = w.set_focus();
     }
+}
+
+/// macOS: a click in the meeting window activates Tyst even though the window cannot take
+/// focus, and the meeting app loses the keyboard until it is clicked again. Deactivating Tyst
+/// gives the keyboard back to the app that was in front. Elsewhere the window rule (KDE) or the
+/// non-focusable window already keeps focus where it was.
+pub fn give_back_focus(app: &AppHandle) {
+    if MEETING_TYPING.load(Ordering::Relaxed) {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    let _ = app.run_on_main_thread(tyst_platform::macos_input::deactivate);
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 /// Grows or shrinks the window between the full and the one-line compact layout.

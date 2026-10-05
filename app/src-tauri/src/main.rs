@@ -76,6 +76,7 @@ fn main() {
             commands::meeting_save,
             commands::meeting_window_hide,
             commands::meeting_window_compact,
+            commands::meeting_window_give_back_focus,
             commands::open_path,
             commands::reveal_path,
             commands::open_transcripts_folder,

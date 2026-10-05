@@ -200,6 +200,7 @@ export const api = {
   save: (title: string | null) => invoke<string>("meeting_save", { title }),
   hide: () => invoke<void>("meeting_window_hide"),
   compact: (compact: boolean) => invoke<void>("meeting_window_compact", { compact }),
+  giveBackFocus: () => invoke<void>("meeting_window_give_back_focus"),
   openPath: (path: string) => invoke<void>("open_path", { path }),
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),
   openTranscripts: () => invoke<void>("open_transcripts_folder"),

@@ -17,7 +17,7 @@ pipewire = ["dep:pipewire"]
 # shortcuts, keyboard input) and KWin scripting over D-Bus; on macOS app activation and CGEvent paste.
 desktop = [
     "dep:arboard", "dep:ashpd", "dep:zbus", "dep:futures-util", "dep:tokio", "dep:serde_json",
-    "dep:objc2-app-kit", "dep:objc2-core-graphics",
+    "dep:objc2", "dep:objc2-foundation", "dep:objc2-app-kit", "dep:objc2-core-graphics",
 ]
 # macOS: system audio through a Core Audio process tap (macOS 14.4+).
 macos-tap = ["dep:objc2", "dep:objc2-foundation", "dep:objc2-core-audio", "dep:objc2-core-audio-types", "dep:objc2-core-foundation"]
@@ -46,5 +46,5 @@ objc2-foundation = { version = "0.3", optional = true, default-features = false,
 objc2-core-audio = { version = "0.3", optional = true, default-features = false, features = ["std", "AudioHardware", "objc2", "objc2-foundation", "objc2-core-audio-types"] }
 objc2-core-audio-types = { version = "0.3", optional = true, default-features = false, features = ["std", "CoreAudioBaseTypes"] }
 objc2-core-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "CFDictionary"] }
-objc2-app-kit = { version = "0.3", optional = true, default-features = false, features = ["std", "libc", "NSWorkspace", "NSRunningApplication"] }
+objc2-app-kit = { version = "0.3", optional = true, default-features = false, features = ["std", "libc", "NSApplication", "NSResponder", "NSWorkspace", "NSRunningApplication"] }
 objc2-core-graphics = { version = "0.3", optional = true, default-features = false, features = ["std", "CGEvent", "CGEventTypes", "CGRemoteOperation"] }

@@ -71,6 +71,13 @@ pub fn meeting_window_hide(app: AppHandle) {
     windows::hide_meeting(&app);
 }
 
+/// After a click in the meeting window: on macOS the click made Tyst the active app, which takes
+/// the keyboard from the meeting app (SPEC 8.1), so hand it back. Not while naming the meeting.
+#[tauri::command]
+pub fn meeting_window_give_back_focus(app: AppHandle) {
+    windows::give_back_focus(&app);
+}
+
 #[tauri::command]
 pub fn meeting_window_compact(app: AppHandle, compact: bool) {
     windows::set_compact(&app, compact);

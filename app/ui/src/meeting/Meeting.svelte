@@ -216,6 +216,13 @@
     if (e.key === "Escape" && phase === "idle") api.hide();
   }
 
+  // macOS: a click here makes Tyst the active app; hand the keyboard back to the meeting app
+  // once the click is handled (Rust ignores this while the name prompt takes typing).
+  function onPointerUp() {
+    if (phase === "naming") return;
+    setTimeout(() => api.giveBackFocus().catch(() => {}), 50);
+  }
+
   onMount(async () => {
     unlisten = await onMeeting(handle);
     apply(await api.appState());
@@ -239,7 +246,7 @@
   });
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} onpointerup={onPointerUp} />
 
 <main class:compact>
   <header data-tauri-drag-region>
