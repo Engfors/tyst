@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-meeting-toggle-pause"
+description = "Enables the meeting_toggle_pause command without any pre-configured scope."
+commands.allow = ["meeting_toggle_pause"]
+
+[[permission]]
+identifier = "deny-meeting-toggle-pause"
+description = "Denies the meeting_toggle_pause command without any pre-configured scope."
+commands.deny = ["meeting_toggle_pause"]

@@ -540,9 +540,13 @@ impl Ctl {
                     self.block_on(keyboard.set(&app, token));
                 }
                 self.text = text;
-                if pasted == Pasted::ClipboardOnly {
+                if pasted != Pasted::Typed {
                     let key = if cfg!(target_os = "macos") { "Cmd+V" } else { "Ctrl+V" };
-                    self.message = Some(format!("Copied. Press {key} to paste."));
+                    self.message = Some(if pasted == Pasted::Denied {
+                        format!("Paste permission denied. Copied; press {key} to paste.")
+                    } else {
+                        format!("Copied. Press {key} to paste.")
+                    });
                     self.set_phase(Phase::Message);
                     self.block_on(desktop.show_pill(&app, false));
                     self.flash_timer();

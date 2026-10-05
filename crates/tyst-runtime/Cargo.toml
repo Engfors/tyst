@@ -11,6 +11,10 @@ default = ["aec"]
 # Echo cancellation on the Me channel with system audio as the reference (WebRTC AEC3, SPEC 6.4).
 # Builds the C++ library from source: needs meson, ninja and a C++ compiler.
 aec = ["dep:webrtc-audio-processing", "dep:webrtc-audio-processing-config"]
+# Capture backends for `sources` (see tyst-platform).
+mic = ["tyst-platform/mic"]
+pipewire = ["tyst-platform/pipewire"]
+macos-tap = ["tyst-platform/macos-tap"]
 
 [dependencies]
 chrono.workspace = true

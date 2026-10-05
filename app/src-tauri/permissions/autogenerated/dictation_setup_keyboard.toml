@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-dictation-setup-keyboard"
+description = "Enables the dictation_setup_keyboard command without any pre-configured scope."
+commands.allow = ["dictation_setup_keyboard"]
+
+[[permission]]
+identifier = "deny-dictation-setup-keyboard"
+description = "Denies the dictation_setup_keyboard command without any pre-configured scope."
+commands.deny = ["dictation_setup_keyboard"]

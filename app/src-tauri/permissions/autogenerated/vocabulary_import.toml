@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-vocabulary-import"
+description = "Enables the vocabulary_import command without any pre-configured scope."
+commands.allow = ["vocabulary_import"]
+
+[[permission]]
+identifier = "deny-vocabulary-import"
+description = "Denies the vocabulary_import command without any pre-configured scope."
+commands.deny = ["vocabulary_import"]

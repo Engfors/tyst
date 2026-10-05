@@ -29,6 +29,8 @@
   let preview = $state<string | null>(null);
   let countdown = $state(0);
   let saving = false;
+  // A failed save, shown in the name prompt: the prompt covers the warning bar.
+  let saveError = $state<string | null>(null);
   let followLatest = $state(true);
   let body: HTMLElement | undefined = $state();
   let titleInput: HTMLInputElement | undefined = $state();
@@ -109,6 +111,7 @@
     preview = snap?.naming?.path_preview ?? null;
     countdown = seconds;
     saving = false;
+    saveError = null;
     await tick();
     titleInput?.focus();
   }
@@ -181,9 +184,11 @@
     saving = true;
     try {
       await api.save(withTitle && title.trim() ? title.trim() : null);
+      saveError = null;
     } catch (e) {
       saving = false;
-      fail(e);
+      saveError = `Could not save: ${errorText(e)}`;
+      titleInput?.focus();
     }
   }
 
@@ -243,13 +248,13 @@
         <span class="dot rec" title="Recording"></span>
       {:else if phase === "paused"}
         <span class="dot paused" title="Paused"></span>
-      {:else if phase === "starting"}
-        <span class="dot starting" title="Starting"></span>
+      {:else if phase === "starting" || phase === "stopping"}
+        <span class="dot starting" title={phase === "starting" ? "Starting" : "Stopping"}></span>
       {:else}
         <span class="dot idle"></span>
       {/if}
       <span class="time mono" data-tauri-drag-region>
-        {#if phase === "starting"}Loading…{:else if recording}{formatElapsed(elapsed)}{:else if phase === "naming"}Stopped{:else}Tyst{/if}
+        {#if phase === "starting"}Loading…{:else if phase === "stopping"}Stopping…{:else if recording}{formatElapsed(elapsed)}{:else if phase === "naming"}Stopped{:else}Tyst{/if}
       </span>
     </div>
 
@@ -283,6 +288,10 @@
         <button class="icon stop" title="Stop" onclick={() => api.stop().catch(fail)}>
           <svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.5" /></svg>
         </button>
+      {:else if phase === "starting"}
+        <button class="icon stop" title="Cancel" onclick={() => api.stop().catch(fail)}>
+          <svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.5" /></svg>
+        </button>
       {:else if phase === "idle"}
         <button class="icon start" title="Start meeting transcription" onclick={() => api.start().catch(fail)}>
           <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5" /></svg>
@@ -313,6 +322,7 @@
       {:else}
         <p class="empty muted">
           {#if phase === "starting"}Loading models…
+          {:else if phase === "stopping"}Finishing the transcript…
           {:else if recording}Listening…
           {:else if phase === "idle"}Start a meeting from here or the tray icon.
           {/if}
@@ -342,6 +352,9 @@
         />
         <button class="primary" type="submit">Save</button>
       </div>
+      {#if saveError}
+        <div class="save-error" role="alert">{saveError}</div>
+      {/if}
       <div class="hint muted">
         <span class="path mono" title={preview ?? ""}>{fileName(preview)}</span>
         <span class="count">Esc: save as is · {countdown}s</span>
@@ -633,6 +646,11 @@
   .naming input {
     flex: 1;
     min-width: 0;
+  }
+
+  .save-error {
+    font-size: 12px;
+    color: var(--warn);
   }
 
   .hint {

@@ -1,11 +1,10 @@
 //! Markdown output (SPEC 7).
 
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::Result;
+use crate::private_fs;
 use crate::transcript::{Channel, MarkerKind, Session};
-use crate::{Error, Result};
 
 const DEFAULT_TITLE: &str = "Meeting";
 const MAX_TITLE_CHARS: usize = 100;
@@ -34,7 +33,9 @@ pub fn render(session: &Session) -> String {
 
     for block in blocks(session) {
         match block {
-            Block::Turn(channel, text) => out.push_str(&format!("\n**{}:** {}\n", info.labels.get(channel), text)),
+            Block::Turn(channel, text) => {
+                out.push_str(&format!("\n**{}:** {}\n", one_line(info.labels.get(channel)), text))
+            }
             Block::Marker(MarkerKind::Paused) => out.push_str("\n*Paused*\n"),
             Block::Marker(MarkerKind::Dictating) => out.push_str("\n*(dictating…)*\n"),
         }
@@ -54,20 +55,15 @@ fn file_stem(session: &Session) -> String {
 /// Writes the transcript into `dir` as `YYYY-MM-DD HHmm <title>.md`, never overwriting an
 /// existing file. Returns the path written.
 pub fn save(session: &Session, dir: &Path) -> Result<PathBuf> {
-    std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+    private_fs::create_dir_all(dir)?;
     let body = render(session);
     let stem = file_stem(session);
     for n in 1.. {
         let name = if n == 1 { format!("{stem}.md") } else { format!("{stem} ({n}).md") };
         let path = dir.join(name);
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut f) => {
-                f.write_all(body.as_bytes()).map_err(|e| Error::io(&path, e))?;
-                f.sync_all().map_err(|e| Error::io(&path, e))?;
-                return Ok(path);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(Error::io(&path, e)),
+        // Written to a private `.part` file first, so a full disk leaves no half transcript.
+        if private_fs::write_new(&path, body.as_bytes())? {
+            return Ok(path);
         }
     }
     unreachable!()
@@ -117,7 +113,13 @@ fn push_marker(out: &mut Vec<Block>, kind: MarkerKind) {
 
 fn display_title(session: &Session) -> String {
     let t = session.title.as_deref().map(str::trim).unwrap_or("");
-    if t.is_empty() { DEFAULT_TITLE.to_string() } else { t.chars().filter(|c| !c.is_control()).collect() }
+    if t.is_empty() { DEFAULT_TITLE.to_string() } else { one_line(t) }
+}
+
+/// Without control characters and Unicode line/paragraph separators, which would end a YAML
+/// value or a Markdown line early.
+fn one_line(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control() && !matches!(c, '\u{2028}' | '\u{2029}')).collect()
 }
 
 /// Makes a title safe as a file name on macOS and Linux (and harmless on Windows shares).
@@ -240,6 +242,16 @@ models: [pianissimo-sv-int8@63730c6]\n\
 \n\
 **Me:** Sure, no problem.\n";
         assert_eq!(md, expected);
+    }
+
+    #[test]
+    fn titles_and_labels_stay_on_one_line() {
+        let mut s = session(Some("Q3\u{2028}title: x\u{2029}y"));
+        s.info.labels = SpeakerLabels { me: "Me\nInjected".into(), others: "Others".into() };
+        let md = render(&s);
+        assert!(!md.contains('\u{2028}') && !md.contains('\u{2029}'));
+        assert!(md.contains("Q3title: xy"));
+        assert!(!md.contains("Me\nInjected"));
     }
 
     #[test]

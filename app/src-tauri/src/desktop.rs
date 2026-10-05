@@ -79,6 +79,18 @@ pub enum Pasted {
     Typed,
     /// Only the clipboard holds the text: the keystroke could not be sent.
     ClipboardOnly,
+    /// Only the clipboard holds the text: the user refused keyboard access for paste.
+    Denied,
+}
+
+/// `text` on one line: line and paragraph breaks become spaces.
+fn single_line(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains(['\n', '\r', '\u{2028}', '\u{2029}']) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let words: Vec<&str> =
+        text.split(['\n', '\r', '\u{2028}', '\u{2029}']).map(str::trim).filter(|l| !l.is_empty()).collect();
+    std::borrow::Cow::Owned(words.join(" "))
 }
 
 impl Desktop {
@@ -210,51 +222,68 @@ impl Desktop {
         keyboard_token: Option<String>,
     ) -> Result<(Pasted, Option<String>), String> {
         let previous = if restore { self.clipboard.text() } else { None };
-        self.clipboard.set_text(text, restore).map_err(|e| e.to_string())?;
+        let terminal = target.class().is_some_and(|c| crate::config::is_terminal(c, terminals));
+        // A newline pasted into a terminal runs what came before it as a command.
+        let text = if terminal { single_line(text) } else { std::borrow::Cow::Borrowed(text) };
+        self.clipboard.set_text(&text, restore).map_err(|e| e.to_string())?;
         self.return_to(target).await;
         tokio_sleep(FOCUS_SETTLE).await;
-        let terminal = target.class().is_some_and(|c| crate::config::is_terminal(c, terminals));
-        let (typed, token) = self.keystroke(terminal, keyboard_token).await;
-        if typed && let Some(prev) = previous {
+        let (pasted, token) = self.keystroke(terminal, keyboard_token).await;
+        if pasted == Pasted::Typed
+            && let Some(prev) = previous
+        {
             tokio_sleep(RESTORE_AFTER).await;
             if let Err(e) = self.clipboard.set_text(&prev, false) {
                 log::warn!("restoring the clipboard: {e}");
             }
         }
-        Ok((if typed { Pasted::Typed } else { Pasted::ClipboardOnly }, token))
+        Ok((pasted, token))
     }
 
     #[cfg(target_os = "linux")]
-    async fn keystroke(&self, terminal: bool, token: Option<String>) -> (bool, Option<String>) {
+    async fn keystroke(&self, terminal: bool, token: Option<String>) -> (Pasted, Option<String>) {
+        use tyst_platform::DesktopError;
         let mut kb = self.keyboard.lock().await;
+        let mut missing = false;
         if kb.is_none() {
             match tyst_platform::portal::PortalKeyboard::new(token.clone()).await {
                 Ok(k) => *kb = Some(k),
-                Err(e) => log::warn!("keyboard portal: {e}"),
+                Err(e) => {
+                    missing = matches!(e, DesktopError::PortalMissing(_));
+                    log::warn!("keyboard portal: {e}");
+                }
             }
         }
         if let Some(k) = kb.as_mut() {
             match k.paste(terminal).await {
-                Ok(()) => return (true, k.restore_token().map(String::from)),
-                Err(e) => log::warn!("paste through the keyboard portal: {e}"),
+                Ok(()) => return (Pasted::Typed, k.restore_token().map(String::from)),
+                Err(e) => {
+                    missing = matches!(e, DesktopError::PortalMissing(_));
+                    log::warn!("paste through the keyboard portal: {e}");
+                }
             }
         }
+        // ydotool is the manual fallback for desktops without the portal (SPEC 10.2), never a
+        // way around a refused consent dialog.
+        if !missing {
+            return (Pasted::Denied, token);
+        }
         match tyst_platform::portal::ydotool_paste(terminal) {
-            Ok(()) => (true, token),
+            Ok(()) => (Pasted::Typed, token),
             Err(e) => {
                 log::warn!("paste through ydotool: {e}");
-                (false, token)
+                (Pasted::ClipboardOnly, token)
             }
         }
     }
 
     #[cfg(target_os = "macos")]
-    async fn keystroke(&self, _terminal: bool, token: Option<String>) -> (bool, Option<String>) {
+    async fn keystroke(&self, _terminal: bool, token: Option<String>) -> (Pasted, Option<String>) {
         match tyst_platform::macos_input::paste() {
-            Ok(()) => (true, token),
+            Ok(()) => (Pasted::Typed, token),
             Err(e) => {
                 log::warn!("paste: {e}");
-                (false, token)
+                (Pasted::ClipboardOnly, token)
             }
         }
     }
@@ -284,4 +313,15 @@ impl Desktop {
 
 async fn tokio_sleep(d: Duration) {
     tokio::time::sleep(d).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_paste_is_one_line() {
+        assert_eq!(single_line("git status"), "git status");
+        assert_eq!(single_line("rm -rf build\nmake\r\n\n  ls\u{2028}x"), "rm -rf build make ls x");
+    }
 }

@@ -2,7 +2,7 @@
 //! `<transcripts>/.tyst-journal/<session-id>.jsonl` as they arrive. An orphaned journal on the
 //! next launch can be turned back into a Markdown file; the journal is deleted after a save.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
@@ -33,9 +33,10 @@ impl Journal {
     /// Starts a journal for a new session.
     pub fn create(transcripts_dir: &Path, info: &SessionInfo) -> Result<Self> {
         let dir = transcripts_dir.join(JOURNAL_DIR);
-        std::fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
+        crate::private_fs::create_dir_all(transcripts_dir)?;
+        crate::private_fs::create_own_dir(&dir)?;
         let path = dir.join(format!("{}.jsonl", info.id));
-        let file = OpenOptions::new().create_new(true).append(true).open(&path).map_err(|e| Error::io(&path, e))?;
+        let file = crate::private_fs::create_new(&path).map_err(|e| Error::io(&path, e))?;
         let mut j = Self { path, file };
         j.write(&Record::Session(info.clone()))?;
         Ok(j)
@@ -93,6 +94,16 @@ pub fn find_orphans(transcripts_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
+/// Renames a journal that can't be read to `<id>.jsonl.bad`, so it is offered once, not on
+/// every launch, and stays on disk for a manual look.
+pub fn set_aside(path: &Path) -> Result<PathBuf> {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".bad");
+    let bad = path.with_file_name(name);
+    std::fs::rename(path, &bad).map_err(|e| Error::io(path, e))?;
+    Ok(bad)
+}
+
 /// Reads a journal back into a session. A torn last line (crash mid-write) is ignored. Without an
 /// end record, the end time is the end of the last segment.
 pub fn recover(path: &Path) -> Result<Session> {
@@ -129,10 +140,26 @@ pub fn recover(path: &Path) -> Result<Session> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::OpenOptions;
     use std::time::Duration;
 
     use super::*;
     use crate::transcript::{Channel, Lang, MarkerKind, SegState, SpeakerLabels};
+
+    #[test]
+    fn a_set_aside_journal_is_no_longer_an_orphan() {
+        let d = std::env::temp_dir().join(format!("tyst-journal-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join(JOURNAL_DIR)).unwrap();
+        let path = d.join(JOURNAL_DIR).join("x.jsonl");
+        std::fs::write(&path, "not json\nnot json either\n").unwrap();
+        assert!(recover(&path).is_err());
+        assert_eq!(find_orphans(&d).unwrap(), vec![path.clone()]);
+        let bad = set_aside(&path).unwrap();
+        assert!(bad.ends_with("x.jsonl.bad") && bad.exists());
+        assert!(find_orphans(&d).unwrap().is_empty());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
 
     fn info(id: &str) -> SessionInfo {
         SessionInfo {

@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pill",
+  "description": "The dictation pill: the dictation in progress and its paste.",
+  "windows": [
+    "pill"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "allow-dictation-cancel",
+    "allow-dictation-copy",
+    "allow-dictation-cycle-language",
+    "allow-dictation-discard",
+    "allow-dictation-edit",
+    "allow-dictation-paste",
+    "allow-dictation-state",
+    "allow-dictation-stop",
+    "allow-meeting-prompt-answer"
+  ]
+}

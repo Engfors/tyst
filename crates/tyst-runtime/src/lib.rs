@@ -11,6 +11,7 @@ pub mod engine;
 pub mod fetch;
 pub mod meeting;
 pub mod playback;
+pub mod sources;
 pub mod update;
 
 pub use engine::{EngineOptions, Runtime};

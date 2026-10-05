@@ -15,6 +15,7 @@ mod dictation;
 #[cfg(target_os = "linux")]
 mod kwin;
 mod secrets;
+mod session;
 mod shortcuts;
 mod sources;
 mod state;
@@ -174,14 +175,7 @@ fn handle_args(app: &AppHandle, args: &[String]) -> bool {
     let mut handled = false;
     for a in args.iter().skip(1) {
         let r = match a.as_str() {
-            "--toggle-meeting" => match app.state::<AppState>().phase() {
-                state::Phase::Recording | state::Phase::Paused => {
-                    state::stop_meeting_in_background(app);
-                    Ok(())
-                }
-                state::Phase::Starting => Ok(()),
-                _ => state::start_meeting(app),
-            },
+            "--toggle-meeting" => state::toggle_meeting(app),
             "--pause" => state::toggle_pause(app),
             "--dictate" => {
                 dictation::send(app, dictation::Cmd::Toggle);
@@ -222,6 +216,10 @@ fn offer_recovery(app: &AppHandle) {
             Ok(s) => s,
             Err(e) => {
                 log::error!("unreadable journal {}: {e}", path.display());
+                match journal::set_aside(&path) {
+                    Ok(bad) => log::warn!("journal kept as {}", bad.display()),
+                    Err(e) => log::error!("could not set the journal aside: {e}"),
+                }
                 continue;
             }
         };

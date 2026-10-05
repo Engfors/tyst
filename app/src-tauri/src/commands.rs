@@ -76,14 +76,36 @@ pub fn meeting_window_compact(app: AppHandle, compact: bool) {
     windows::set_compact(&app, compact);
 }
 
+/// Opens a saved transcript (only files inside the transcripts folder).
 #[tauri::command]
 pub fn open_path(app: AppHandle, path: String) -> CmdResult {
-    open(&app, std::path::Path::new(&path))
+    let path = transcript_path(&app, &path)?;
+    open(&app, &path)
 }
 
+/// Shows a saved transcript in the file manager (only files inside the transcripts folder).
 #[tauri::command]
 pub fn reveal_path(app: AppHandle, path: String) -> CmdResult {
+    let path = transcript_path(&app, &path)?;
     app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
+}
+
+fn transcript_path(app: &AppHandle, path: &str) -> CmdResult<std::path::PathBuf> {
+    let dir = app.state::<AppState>().config().transcripts_dir.ok_or("No transcripts folder chosen yet.")?;
+    inside(&dir, path)
+}
+
+/// `path` as an existing file or folder inside `dir` (after resolving `..` and links). URLs and
+/// anything else are refused, so a webview cannot use the opener to reach the network or run
+/// other files.
+fn inside(dir: &std::path::Path, path: &str) -> CmdResult<std::path::PathBuf> {
+    let refuse = || format!("Not a file in the transcripts folder: {path}");
+    if path.contains("://") || !std::path::Path::new(path).is_absolute() {
+        return Err(refuse());
+    }
+    let dir = dir.canonicalize().map_err(|e| e.to_string())?;
+    let path = std::path::Path::new(path).canonicalize().map_err(|_| refuse())?;
+    if path.starts_with(&dir) { Ok(path) } else { Err(refuse()) }
 }
 
 #[tauri::command]
@@ -129,8 +151,11 @@ pub struct ConfigView {
 
 #[tauri::command]
 pub fn config_get(app: AppHandle) -> ConfigView {
+    let mut config = app.state::<AppState>().config();
+    // The paste consent token never goes to a webview; `dictation_info` says whether one exists.
+    config.dictation.keyboard_token = None;
     ConfigView {
-        config: app.state::<AppState>().config(),
+        config,
         config_dir: config::config_dir().display().to_string(),
         default_transcripts_dir: config::default_transcripts_dir().display().to_string(),
         default_models_dir: tyst_core::models::default_models_dir().display().to_string(),
@@ -225,7 +250,8 @@ pub fn models_status(app: AppHandle) -> CmdResult<Vec<ModelRow>> {
     let manifest = Manifest::builtin();
     let mut rows = Vec::new();
     for (id, spec) in &manifest.models {
-        let statuses = tyst_core::models::verify(spec, &dir, false).map_err(|e| e.to_string())?;
+        let statuses =
+            tyst_core::models::verify(spec, &dir, tyst_core::models::Check::Size).map_err(|e| e.to_string())?;
         let ok = statuses.iter().filter(|(_, s)| *s == FileStatus::Ok).count();
         let missing = statuses.iter().filter(|(_, s)| *s == FileStatus::Missing).count();
         let status = if fetch::installed(&[id.as_str()], &dir) {
@@ -276,6 +302,9 @@ pub fn models_fetch(app: AppHandle, ids: Vec<String>) -> CmdResult {
     let cancel = fs.cancel.clone();
     let dir = app.state::<AppState>().config().models_dir();
     std::thread::spawn(move || {
+        // Clears the running flag however this thread ends, panics included, so a crash in
+        // the download never blocks the next one until a restart.
+        let _running = DownloadRunning(app.clone());
         let ids: Vec<String> =
             if ids.is_empty() { DEFAULT_MODELS.iter().map(|s| s.to_string()).collect() } else { ids };
         let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
@@ -292,7 +321,7 @@ pub fn models_fetch(app: AppHandle, ids: Vec<String>) -> CmdResult {
             };
             emit(ModelsEvent::Progress { file, done, total, note });
         });
-        app.state::<FetchState>().running.store(false, Ordering::SeqCst);
+        drop(_running);
         match result {
             Ok(()) => {
                 emit(ModelsEvent::Done);
@@ -305,6 +334,18 @@ pub fn models_fetch(app: AppHandle, ids: Vec<String>) -> CmdResult {
         }
     });
     Ok(())
+}
+
+struct DownloadRunning(AppHandle);
+
+impl Drop for DownloadRunning {
+    fn drop(&mut self) {
+        self.0.state::<FetchState>().running.store(false, Ordering::SeqCst);
+        if std::thread::panicking() {
+            let _ =
+                self.0.emit(MODELS_EVENT, ModelsEvent::Failed { message: "The download stopped unexpectedly.".into() });
+        }
+    }
 }
 
 #[tauri::command]
@@ -320,7 +361,12 @@ pub async fn models_verify(app: AppHandle, full: bool) -> CmdResult<Vec<String>>
         let manifest = Manifest::builtin();
         let mut problems = Vec::new();
         for (id, spec) in &manifest.models {
-            let statuses = tyst_core::models::verify(spec, &dir, full).map_err(|e| e.to_string())?;
+            let statuses = tyst_core::models::verify(
+                spec,
+                &dir,
+                if full { tyst_core::models::Check::Full } else { tyst_core::models::Check::Stamp },
+            )
+            .map_err(|e| e.to_string())?;
             if id == PARAKEET && statuses.iter().all(|(_, s)| *s == FileStatus::Missing) {
                 continue;
             }
@@ -574,6 +620,22 @@ pub fn install_window_rule() -> CmdResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opener_only_reaches_the_transcripts_folder() {
+        let root = std::env::temp_dir().join(format!("tyst-open-{}", std::process::id()));
+        let dir = root.join("Transcripts");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.md"), "x").unwrap();
+        std::fs::write(root.join("secret"), "x").unwrap();
+        assert!(inside(&dir, dir.join("a.md").to_str().unwrap()).is_ok());
+        assert!(inside(&dir, dir.join("../secret").to_str().unwrap()).is_err());
+        assert!(inside(&dir, root.join("secret").to_str().unwrap()).is_err());
+        assert!(inside(&dir, "https://example.com/x").is_err());
+        assert!(inside(&dir, "a.md").is_err());
+        assert!(inside(&dir, dir.join("missing.md").to_str().unwrap()).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn vocabulary_keeps_replacements_over_ipc() {

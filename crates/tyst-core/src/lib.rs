@@ -10,6 +10,7 @@ pub mod journal;
 pub mod markdown;
 pub mod models;
 pub mod pipeline;
+pub mod private_fs;
 pub mod resample;
 pub mod router;
 pub mod segmenter;

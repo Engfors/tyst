@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-dictation-setup-shortcuts"
+description = "Enables the dictation_setup_shortcuts command without any pre-configured scope."
+commands.allow = ["dictation_setup_shortcuts"]
+
+[[permission]]
+identifier = "deny-dictation-setup-shortcuts"
+description = "Denies the dictation_setup_shortcuts command without any pre-configured scope."
+commands.deny = ["dictation_setup_shortcuts"]

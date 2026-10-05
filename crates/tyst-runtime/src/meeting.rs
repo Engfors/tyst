@@ -9,7 +9,7 @@
 //! forward, so Me and Others stay on the same timeline.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -38,6 +38,43 @@ const GAP: Duration = Duration::from_secs(1);
 /// Level meter update interval.
 const LEVEL_INTERVAL: usize = SAMPLE_RATE as usize / 10;
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// Audio waiting for the worker beyond this: quiet chunks are dropped (SPEC 11: 3-hour
+/// meetings without memory growth).
+const SOFT_BACKLOG_MS: u64 = 10_000;
+/// Beyond this every chunk is dropped, with a warning, until the worker catches up. About 23 MB
+/// of 48 kHz mono audio per channel.
+const HARD_BACKLOG_MS: u64 = 120_000;
+/// RMS below this counts as silence for dropping (about -54 dBFS).
+const SILENCE_RMS: f32 = 0.002;
+
+/// What the capture thread does with a chunk, given how much audio already waits.
+#[derive(Debug, PartialEq, Eq)]
+enum Admit {
+    Keep,
+    DropSilence,
+    DropBehind,
+}
+
+fn admit(backlog_ms: u64, rms: f32) -> Admit {
+    if backlog_ms >= HARD_BACKLOG_MS {
+        Admit::DropBehind
+    } else if backlog_ms >= SOFT_BACKLOG_MS && rms < SILENCE_RMS {
+        Admit::DropSilence
+    } else {
+        Admit::Keep
+    }
+}
+
+fn chunk_ms(c: &AudioChunk) -> u64 {
+    c.samples.len() as u64 * 1000 / c.sample_rate.max(1) as u64
+}
+
+fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    (samples.iter().map(|x| x * x).sum::<f32>() / samples.len() as f32).sqrt()
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MeetingEvent {
@@ -332,6 +369,12 @@ impl Meeting {
         }
     }
 
+    /// Stops capture and throws the meeting away, journal included (a start that was cancelled).
+    pub fn discard(mut self) {
+        self.abort();
+        log::info!("meeting {} discarded", self.info.id);
+    }
+
     /// Start failed: stop what runs and delete the empty journal.
     fn abort(&mut self) {
         self.join();
@@ -369,15 +412,28 @@ impl StoppedMeeting {
     }
 
     /// Writes the Markdown file (never overwriting) and deletes the journal.
-    pub fn save(mut self, title: Option<String>) -> Result<PathBuf> {
+    pub fn save(self, title: Option<String>) -> Result<PathBuf> {
+        self.try_save(title).map_err(|f| f.1)
+    }
+
+    /// [`Self::save`] that hands the meeting back when writing fails, so it can be saved again.
+    pub fn try_save(mut self, title: Option<String>) -> std::result::Result<PathBuf, Box<(Self, crate::Error)>> {
         let title = title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-        if let (Some(j), Some(t)) = (self.journal.as_mut(), title.as_deref()) {
-            j.set_title(t)?;
+        if let (Some(j), Some(t)) = (self.journal.as_mut(), title.as_deref())
+            && let Err(e) = j.set_title(t)
+        {
+            return Err(Box::new((self, e.into())));
         }
         self.session.title = title;
-        let path = markdown::save(&self.session, &self.transcripts_dir)?;
-        if let Some(j) = self.journal.take() {
-            j.remove()?;
+        let path = match markdown::save(&self.session, &self.transcripts_dir) {
+            Ok(p) => p,
+            Err(e) => return Err(Box::new((self, e.into()))),
+        };
+        if let Some(j) = self.journal.take()
+            && let Err(e) = j.remove()
+        {
+            // The transcript is saved; a leftover journal would only offer a duplicate recovery.
+            log::error!("meeting {}: removing the journal failed: {e}", self.session.info.id);
         }
         log::info!("meeting {} saved", self.session.info.id);
         Ok(path)
@@ -405,6 +461,8 @@ fn spawn_channel<D: SpeechDetector + 'static>(
     shared: Arc<Shared>,
 ) -> Result<ChannelThreads, CaptureError> {
     let (audio_tx, audio_rx) = mpsc::channel::<AudioChunk>();
+    // Milliseconds of audio sent to the worker and not yet taken: what keeps the queue bounded.
+    let backlog = Arc::new(AtomicU64::new(0));
     let (control, control_rx) = mpsc::channel::<CaptureCmd>();
     let (started_tx, started_rx) = mpsc::sync_channel::<Result<String, CaptureError>>(1);
     // The worker spends time decoding; the echo reference must not wait for it, or Me (which
@@ -423,14 +481,18 @@ fn spawn_channel<D: SpeechDetector + 'static>(
     };
     let capture = {
         let shared = shared.clone();
+        let backlog = backlog.clone();
         std::thread::Builder::new()
             .name(format!("tyst-capture-{channel:?}"))
-            .spawn(move || capture_thread(channel, factory, source_tx, control_rx, started_tx, shared))
+            .spawn(move || {
+                let queue = Queue { channel, tx: source_tx, backlog, behind: false, dropped_ms: 0 };
+                capture_thread(channel, factory, queue, control_rx, started_tx, shared)
+            })
             .map_err(|e| CaptureError::Device(e.to_string()))?
     };
     let worker = std::thread::Builder::new()
         .name(format!("tyst-worker-{channel:?}"))
-        .spawn(move || worker_thread(channel, pipeline, echo, audio_rx, shared))
+        .spawn(move || worker_thread(channel, pipeline, echo, audio_rx, backlog, shared))
         .map_err(|e| CaptureError::Device(e.to_string()))?;
     let threads = ChannelThreads { channel, control, capture, tee, worker };
     match started_rx.recv() {
@@ -447,6 +509,47 @@ fn spawn_channel<D: SpeechDetector + 'static>(
             Err(e)
         }
         Err(_) => Err(CaptureError::Device("capture thread exited".into())),
+    }
+}
+
+/// The capture side of a channel's audio queue. Sources push into an unbounded channel of their
+/// own; the capture thread moves chunks on to the worker only while the worker keeps up.
+struct Queue {
+    channel: Channel,
+    tx: Sender<AudioChunk>,
+    backlog: Arc<AtomicU64>,
+    /// Dropping everything (hard limit reached) until the worker catches up.
+    behind: bool,
+    dropped_ms: u64,
+}
+
+impl Queue {
+    fn push(&mut self, chunk: AudioChunk, shared: &Shared) {
+        let ms = chunk_ms(&chunk);
+        let backlog = self.backlog.load(Ordering::SeqCst);
+        if self.behind && backlog < SOFT_BACKLOG_MS {
+            self.behind = false;
+            log::warn!("{:?}: recognizer caught up; {} ms of audio were skipped", self.channel, self.dropped_ms);
+            self.dropped_ms = 0;
+        }
+        match admit(backlog, rms(&chunk.samples)) {
+            Admit::Keep if !self.behind => {
+                self.backlog.fetch_add(ms, Ordering::SeqCst);
+                let _ = self.tx.send(chunk);
+            }
+            Admit::DropSilence => {}
+            Admit::Keep | Admit::DropBehind => {
+                if !self.behind {
+                    self.behind = true;
+                    log::warn!("{:?}: recognizer is {} ms behind, skipping audio", self.channel, backlog);
+                    shared.emit(MeetingEvent::Error {
+                        channel: Some(self.channel),
+                        message: "Transcription is falling behind; some audio is skipped until it catches up.".into(),
+                    });
+                }
+                self.dropped_ms += ms;
+            }
+        }
     }
 }
 
@@ -478,11 +581,12 @@ fn reference_tee(
 fn capture_thread(
     channel: Channel,
     factory: SourceFactory,
-    sink: Sender<AudioChunk>,
+    mut queue: Queue,
     control: Receiver<CaptureCmd>,
     started: mpsc::SyncSender<Result<String, CaptureError>>,
     shared: Arc<Shared>,
 ) {
+    let (sink, raw) = mpsc::channel::<AudioChunk>();
     let mut source = match factory().and_then(|mut s| s.start(sink.clone()).map(|_| s)) {
         Ok(s) => {
             let _ = started.send(Ok(s.device_name()));
@@ -494,8 +598,15 @@ fn capture_thread(
         }
     };
     let mut running = true;
+    let mut next_poll = Instant::now() + POLL_INTERVAL;
     loop {
-        match control.recv_timeout(POLL_INTERVAL) {
+        if let Ok(chunk) = raw.recv_timeout(Duration::from_millis(50)) {
+            queue.push(chunk, &shared);
+            for chunk in raw.try_iter() {
+                queue.push(chunk, &shared);
+            }
+        }
+        match control.try_recv() {
             Ok(CaptureCmd::Pause) if running => {
                 if let Err(e) = source.stop() {
                     shared.emit(MeetingEvent::CaptureError { channel, message: e.to_string() });
@@ -506,17 +617,22 @@ fn capture_thread(
                 Ok(()) => running = true,
                 Err(e) => shared.emit(MeetingEvent::CaptureError { channel, message: e.to_string() }),
             },
-            Ok(_) => {}
-            Err(RecvTimeoutError::Timeout) => {
-                if running && let Err(e) = source.poll() {
-                    log::warn!("{channel:?} capture: {e}");
-                    shared.emit(MeetingEvent::CaptureError { channel, message: e.to_string() });
-                }
+            Ok(_) | Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => break,
+        }
+        if Instant::now() >= next_poll {
+            next_poll = Instant::now() + POLL_INTERVAL;
+            if running && let Err(e) = source.poll() {
+                log::warn!("{channel:?} capture: {e}");
+                shared.emit(MeetingEvent::CaptureError { channel, message: e.to_string() });
             }
-            Err(RecvTimeoutError::Disconnected) => break,
         }
     }
     let _ = source.stop();
+    drop(source);
+    for chunk in raw.try_iter() {
+        queue.push(chunk, &shared);
+    }
 }
 
 fn worker_thread<D: SpeechDetector>(
@@ -524,6 +640,7 @@ fn worker_thread<D: SpeechDetector>(
     pipeline: ChannelPipeline<D>,
     mut echo: Echo,
     rx: Receiver<AudioChunk>,
+    backlog: Arc<AtomicU64>,
     shared: Arc<Shared>,
 ) {
     let mut resampler: Option<(u32, Resampler)> = None;
@@ -548,6 +665,7 @@ fn worker_thread<D: SpeechDetector>(
             }
             Err(RecvTimeoutError::Disconnected) => break,
         };
+        backlog.fetch_sub(chunk_ms(&chunk), Ordering::SeqCst);
         flushed_for_pause = false;
         let r = match &mut resampler {
             Some((rate, r)) if *rate == chunk.sample_rate => r,
@@ -668,6 +786,57 @@ mod tests {
     use tyst_core::vocabulary::VocabularyRules;
 
     use super::*;
+
+    #[test]
+    fn queue_drops_silence_then_everything_when_far_behind() {
+        assert_eq!(admit(0, 0.0), Admit::Keep);
+        assert_eq!(admit(SOFT_BACKLOG_MS, 0.5), Admit::Keep);
+        assert_eq!(admit(SOFT_BACKLOG_MS, 0.0), Admit::DropSilence);
+        assert_eq!(admit(HARD_BACKLOG_MS, 0.5), Admit::DropBehind);
+    }
+
+    #[test]
+    fn queue_stays_bounded_and_warns_once() {
+        let (events_tx, events_rx) = mpsc::channel();
+        let shared = Shared {
+            started: Instant::now(),
+            paused: AtomicBool::new(false),
+            dictating: AtomicBool::new(false),
+            mode: AtomicU8::new(0),
+            recorder: Mutex::new(Recorder::default()),
+            events: events_tx,
+        };
+        let (tx, rx) = mpsc::channel();
+        let backlog = Arc::new(AtomicU64::new(0));
+        let mut q = Queue { channel: Channel::Others, tx, backlog: backlog.clone(), behind: false, dropped_ms: 0 };
+        // A worker that never takes anything: 10 minutes of speech at 48 kHz, 100 ms chunks.
+        for _ in 0..6000 {
+            let chunk = AudioChunk {
+                channel: Channel::Others,
+                sample_rate: 48_000,
+                samples: vec![0.1; 4800],
+                captured_at: Instant::now(),
+            };
+            q.push(chunk, &shared);
+        }
+        assert_eq!(backlog.load(Ordering::SeqCst), HARD_BACKLOG_MS);
+        assert_eq!(rx.try_iter().count() as u64, HARD_BACKLOG_MS / 100);
+        let warnings = events_rx.try_iter().filter(|e| matches!(e, MeetingEvent::Error { .. })).count();
+        assert_eq!(warnings, 1);
+        // The worker catches up: audio flows again.
+        backlog.store(0, Ordering::SeqCst);
+        q.push(
+            AudioChunk {
+                channel: Channel::Others,
+                sample_rate: 48_000,
+                samples: vec![0.1; 4800],
+                captured_at: Instant::now(),
+            },
+            &shared,
+        );
+        assert!(!q.behind);
+        assert_eq!(rx.try_iter().count(), 1);
+    }
 
     struct FakeEngine;
 

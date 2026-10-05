@@ -58,7 +58,9 @@ packaging/notices/generate.sh                             # THIRD_PARTY_NOTICES.
 a C++ compiler. A tag `vX.Y.Z` runs `.github/workflows/release.yml` (draft release, GPG-signed checksums).
 Actions are pinned to commit SHAs; keep them pinned when updating. `cargo audit` runs in CI (`.cargo/audit.toml`).
 
-Model tests in `crates/tyst-core/tests/models.rs` run only when `TYST_MODELS` points at installed models.
+Model tests in `crates/tyst-core/tests/models.rs` are `#[ignore]`d; run them with
+`TYST_MODELS=<dir> cargo test -p tyst-core --test models -- --ignored`. Eval harness tests:
+`(cd eval && python3 -m unittest discover -s tests)`.
 On Linux, building the `mic` feature needs ALSA headers and `pipewire` needs PipeWire headers plus clang;
 the app also needs webkit2gtk-4.1 and libayatana-appindicator (see `.github/workflows/ci.yml`).
 `--no-default-features` builds the CLI without audio capture.

@@ -18,8 +18,49 @@ use crate::DesktopError;
 
 impl From<ashpd::Error> for DesktopError {
     fn from(e: ashpd::Error) -> Self {
-        DesktopError::Portal(e.to_string())
+        if portal_missing(&e) {
+            DesktopError::PortalMissing(e.to_string())
+        } else {
+            DesktopError::Portal(e.to_string())
+        }
     }
+}
+
+/// True when the error says no portal answered: no session bus, no portal service, or no such
+/// interface. A refusal (the user said no) or any error from a portal that did answer is not.
+fn portal_missing(e: &ashpd::Error) -> bool {
+    match e {
+        ashpd::Error::PortalNotFound(_) | ashpd::Error::RequiresVersion(..) => true,
+        ashpd::Error::Zbus(z) | ashpd::Error::Portal(ashpd::PortalError::ZBus(z)) => zbus_missing(z),
+        _ => false,
+    }
+}
+
+fn zbus_missing(e: &zbus::Error) -> bool {
+    match e {
+        zbus::Error::Address(_) | zbus::Error::InterfaceNotFound => true,
+        zbus::Error::MethodError(name, ..) => is_missing_name(name.as_str()),
+        zbus::Error::FDO(f) => matches!(
+            **f,
+            zbus::fdo::Error::ServiceUnknown(_)
+                | zbus::fdo::Error::UnknownInterface(_)
+                | zbus::fdo::Error::UnknownMethod(_)
+                | zbus::fdo::Error::UnknownObject(_)
+                | zbus::fdo::Error::NameHasNoOwner(_)
+        ),
+        _ => false,
+    }
+}
+
+fn is_missing_name(name: &str) -> bool {
+    matches!(
+        name,
+        "org.freedesktop.DBus.Error.ServiceUnknown"
+            | "org.freedesktop.DBus.Error.UnknownInterface"
+            | "org.freedesktop.DBus.Error.UnknownMethod"
+            | "org.freedesktop.DBus.Error.UnknownObject"
+            | "org.freedesktop.DBus.Error.NameHasNoOwner"
+    )
 }
 
 /// Registers this process with the portal as `app_id` (which needs a matching
@@ -207,7 +248,8 @@ impl PortalKeyboard {
     }
 }
 
-/// Fallback when the portal is missing: Ctrl+V (Ctrl+Shift+V) through `ydotool`, which needs
+/// Fallback only when the portal is missing ([`DesktopError::PortalMissing`]), never after the
+/// user refused the portal's dialog: Ctrl+V (Ctrl+Shift+V) through `ydotool`, which needs
 /// `ydotoold` running and access to `/dev/uinput` (SPEC 10.2, set up by the user).
 pub fn ydotool_paste(shift: bool) -> Result<(), DesktopError> {
     // Linux input event codes: KEY_LEFTCTRL 29, KEY_LEFTSHIFT 42, KEY_V 47.
@@ -219,4 +261,22 @@ pub fn ydotool_paste(shift: bool) -> Result<(), DesktopError> {
         .status()
         .map_err(|e| DesktopError::Portal(format!("ydotool: {e}")))?;
     if status.success() { Ok(()) } else { Err(DesktopError::Portal(format!("ydotool exited with {status}"))) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_absent_portal_counts_as_missing() {
+        let missing = ashpd::Error::PortalNotFound("org.freedesktop.portal.RemoteDesktop".try_into().unwrap());
+        assert!(matches!(DesktopError::from(missing), DesktopError::PortalMissing(_)));
+        let no_service = ashpd::Error::Zbus(zbus::Error::FDO(Box::new(zbus::fdo::Error::ServiceUnknown("x".into()))));
+        assert!(matches!(DesktopError::from(no_service), DesktopError::PortalMissing(_)));
+        // The user pressed "Don't allow" in the consent dialog.
+        let denied = ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled);
+        assert!(matches!(DesktopError::from(denied), DesktopError::Portal(_)));
+        let other = ashpd::Error::Response(ashpd::desktop::ResponseError::Other);
+        assert!(matches!(DesktopError::from(other), DesktopError::Portal(_)));
+    }
 }

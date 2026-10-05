@@ -120,23 +120,10 @@ pub fn run(args: MeetingArgs) -> Result<()> {
 }
 
 pub(crate) fn mic_source() -> Result<SourceFactory> {
-    #[cfg(all(target_os = "linux", feature = "pipewire"))]
-    return Ok(Box::new(|| Ok(Box::new(tyst_platform::pipewire::PipeWireSource::microphone()) as _)));
-    #[cfg(all(not(all(target_os = "linux", feature = "pipewire")), feature = "mic"))]
-    return Ok(Box::new(|| Ok(Box::new(tyst_platform::mic::MicSource::new()) as _)));
-    #[allow(unreachable_code)]
-    {
-        bail!("built without microphone support")
-    }
+    tyst_runtime::sources::microphone().ok_or_else(|| anyhow::anyhow!("built without microphone support"))
 }
 
 fn system_source() -> Result<SourceFactory> {
-    #[cfg(all(target_os = "linux", feature = "pipewire"))]
-    return Ok(Box::new(|| Ok(Box::new(tyst_platform::pipewire::PipeWireSource::system_audio()) as _)));
-    #[cfg(all(target_os = "macos", feature = "macos-tap"))]
-    return Ok(Box::new(|| Ok(Box::new(tyst_platform::macos_tap::SystemAudioTap::new()) as _)));
-    #[allow(unreachable_code)]
-    {
-        bail!("system audio capture is not available in this build")
-    }
+    tyst_runtime::sources::system_audio()
+        .ok_or_else(|| anyhow::anyhow!("system audio capture is not available in this build"))
 }

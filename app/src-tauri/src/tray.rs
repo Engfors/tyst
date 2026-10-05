@@ -79,14 +79,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
 
 fn on_menu(app: &AppHandle, id: &str) {
     let result = match id {
-        "start_stop" => match app.state::<AppState>().phase() {
-            Phase::Recording | Phase::Paused => {
-                state::stop_meeting_in_background(app);
-                Ok(())
-            }
-            Phase::Idle | Phase::Naming => state::start_meeting(app),
-            Phase::Starting => Ok(()),
-        },
+        "start_stop" => state::toggle_meeting(app),
         "pause" => state::toggle_pause(app),
         "dictate" => {
             dictation::send(app, dictation::Cmd::Toggle);
@@ -162,7 +155,8 @@ pub fn refresh(app: &AppHandle) {
     *last = Some((phase, warning, dictating, update.available));
     let (label, pause, pause_enabled, icon_name, tip) = match phase {
         Phase::Idle | Phase::Naming => ("Start meeting transcription", "Pause", false, "idle", "Tyst"),
-        Phase::Starting => ("Starting…", "Pause", false, "recording", "Tyst: starting"),
+        Phase::Starting => ("Cancel meeting start", "Pause", false, "recording", "Tyst: starting"),
+        Phase::Stopping => ("Stopping…", "Pause", false, "recording", "Tyst: stopping"),
         Phase::Recording => ("Stop meeting transcription", "Pause", true, "recording", "Tyst: recording"),
         Phase::Paused => ("Stop meeting transcription", "Resume", true, "paused", "Tyst: paused"),
     };
@@ -171,7 +165,7 @@ pub fn refresh(app: &AppHandle) {
         if update.available && icon_name == "idle" { ("update", "Tyst: update available") } else { (icon_name, tip) };
     let icon_name = if warning { "error" } else { icon_name };
     let _ = tray.start_stop.set_text(label);
-    let _ = tray.start_stop.set_enabled(phase != Phase::Starting);
+    let _ = tray.start_stop.set_enabled(phase != Phase::Stopping);
     let _ = tray.pause.set_text(pause);
     let _ = tray.pause.set_enabled(pause_enabled);
     let _ = tray.icon.set_icon(Some(icon(icon_name)));

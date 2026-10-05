@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-models-installed"
+description = "Enables the models_installed command without any pre-configured scope."
+commands.allow = ["models_installed"]
+
+[[permission]]
+identifier = "deny-models-installed"
+description = "Denies the models_installed command without any pre-configured scope."
+commands.deny = ["models_installed"]

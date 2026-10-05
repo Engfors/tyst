@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-dictation-copy"
+description = "Enables the dictation_copy command without any pre-configured scope."
+commands.allow = ["dictation_copy"]
+
+[[permission]]
+identifier = "deny-dictation-copy"
+description = "Denies the dictation_copy command without any pre-configured scope."
+commands.deny = ["dictation_copy"]

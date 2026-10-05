@@ -34,14 +34,17 @@ fn kdeleteconfig(group: &str, key: &str) -> Result<(), String> {
     if out.status.success() { Ok(()) } else { Err(format!("kwriteconfig6 exited with {}", out.status)) }
 }
 
-fn kreadconfig(group: &str, key: &str) -> String {
-    host_command("kreadconfig6")
+/// Reads a key; an absent key is an empty string. Fails when `kreadconfig6` can't be run, so
+/// callers never mistake a failed read for an empty list and write over the user's rules.
+fn kreadconfig(group: &str, key: &str) -> Result<String, String> {
+    let out = host_command("kreadconfig6")
         .args(["--file", "kwinrulesrc", "--group", group, "--key", key])
         .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
+        .map_err(|e| format!("kreadconfig6: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("kreadconfig6 exited with {}", out.status));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// Installs (or refreshes) the rules. Does nothing outside KDE.
@@ -88,7 +91,7 @@ fn install_pill_rule() -> Result<(), String> {
 }
 
 fn add_to_rule_list(rule: &str) -> Result<(), String> {
-    let rules = kreadconfig("General", "rules");
+    let rules = kreadconfig("General", "rules")?;
     let mut ids: Vec<&str> = rules.split(',').filter(|s| !s.is_empty()).collect();
     if !ids.contains(&rule) {
         ids.push(rule);

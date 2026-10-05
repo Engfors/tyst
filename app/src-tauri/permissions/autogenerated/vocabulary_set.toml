@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-vocabulary-set"
+description = "Enables the vocabulary_set command without any pre-configured scope."
+commands.allow = ["vocabulary_set"]
+
+[[permission]]
+identifier = "deny-vocabulary-set"
+description = "Denies the vocabulary_set command without any pre-configured scope."
+commands.deny = ["vocabulary_set"]
