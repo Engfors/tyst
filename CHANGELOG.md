@@ -3,12 +3,22 @@
 All notable changes to Tyst. Versions follow [Semantic Versioning](https://semver.org/). The section
 for a version is the text of its GitHub release and of the update notice in Settings › Updates.
 
-## Unreleased
+## 0.1.1 - 2026-10-06
+
+The first release from the public repository, and the first whose checksums are signed by a tag-only
+release job.
 
 Security
 - The update check is anonymous now that the repository is public. The GitHub token field is gone
   from Settings › Updates, and a token saved by 0.1.0 is deleted from the keychain on first start.
 - Releases are signed only from tag builds; the signing key is kept out of pull request dry runs.
+- "Open transcripts folder" creates a missing transcripts folder readable by you only.
+
+Fixes
+- Meeting detection, the update check and idle model unload now start as soon as onboarding
+  finishes, instead of after the next restart.
+- Dictation keeps a bounded audio queue, so a slow computer drops audio instead of using more and
+  more memory.
 
 ## 0.1.0 - 2026-10-05
 

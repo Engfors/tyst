@@ -6547,11 +6547,11 @@ SOFTWARE.
 ### MIT License
 
 Used by:
-- [tyst-app 0.1.0](https://crates.io/crates/tyst-app)
-- [tyst-cli 0.1.0](https://crates.io/crates/tyst-cli)
-- [tyst-core 0.1.0](https://crates.io/crates/tyst-core)
-- [tyst-platform 0.1.0](https://crates.io/crates/tyst-platform)
-- [tyst-runtime 0.1.0](https://crates.io/crates/tyst-runtime)
+- [tyst-app 0.1.1](https://crates.io/crates/tyst-app)
+- [tyst-cli 0.1.1](https://crates.io/crates/tyst-cli)
+- [tyst-core 0.1.1](https://crates.io/crates/tyst-core)
+- [tyst-platform 0.1.1](https://crates.io/crates/tyst-platform)
+- [tyst-runtime 0.1.1](https://crates.io/crates/tyst-runtime)
 - [block2 0.6.2](https://github.com/madsmtm/objc2)
 - [brotli-decompressor 6.0.1](https://github.com/dropbox/rust-brotli-decompressor)
 - [chrono 0.4.45](https://github.com/chronotope/chrono)
