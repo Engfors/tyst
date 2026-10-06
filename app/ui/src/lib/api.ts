@@ -150,7 +150,6 @@ export interface Release {
 export interface UpdateView {
   current: string;
   enabled: boolean;
-  has_token: boolean;
   checking: boolean;
   last_checked: string | null;
   latest: Release | null;
@@ -237,7 +236,6 @@ export const api = {
   meetingPromptAnswer: (start: boolean) => invoke<void>("meeting_prompt_answer", { start }),
   updatesState: () => invoke<UpdateView>("updates_state"),
   updatesCheck: () => invoke<UpdateView>("updates_check"),
-  updatesSetToken: (token: string | null) => invoke<UpdateView>("updates_set_token", { token }),
   updatesOpenRelease: () => invoke<void>("updates_open_release"),
 };
 

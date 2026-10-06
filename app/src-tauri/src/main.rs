@@ -112,7 +112,6 @@ fn main() {
             commands::meeting_prompt_answer,
             commands::updates_state,
             commands::updates_check,
-            commands::updates_set_token,
             commands::updates_open_release,
         ])
         .setup(|app| {
@@ -135,6 +134,7 @@ fn main() {
                 let handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     handle.state::<secrets::KeyboardToken>().migrate(&handle).await;
+                    updates::forget_legacy_token(&handle).await;
                 });
             }
             if !cfg.onboarded {

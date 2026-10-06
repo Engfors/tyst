@@ -1,0 +1,11 @@
+# Keeps the SHA-pinned actions current (issue #14, CI-001). Security updates for Cargo and npm
+# come from Dependabot security updates in the repository settings, without version-bump noise.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

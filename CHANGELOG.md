@@ -3,6 +3,13 @@
 All notable changes to Tyst. Versions follow [Semantic Versioning](https://semver.org/). The section
 for a version is the text of its GitHub release and of the update notice in Settings › Updates.
 
+## Unreleased
+
+Security
+- The update check is anonymous now that the repository is public. The GitHub token field is gone
+  from Settings › Updates, and a token saved by 0.1.0 is deleted from the keychain on first start.
+- Releases are signed only from tag builds; the signing key is kept out of pull request dry runs.
+
 ## 0.1.0 - 2026-10-05
 
 The first release: local meeting transcription and dictation in Swedish and English, including

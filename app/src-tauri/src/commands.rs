@@ -607,14 +607,6 @@ pub async fn updates_check(app: AppHandle) -> Result<UpdateView, String> {
     tauri::async_runtime::spawn_blocking(move || updates::check(&app)).await.map_err(|e| e.to_string())
 }
 
-/// Stores (or with `None` removes) the GitHub token for the update check. The token goes to the
-/// keychain only and is never sent back to the UI.
-#[tauri::command]
-pub async fn updates_set_token(app: AppHandle, token: Option<String>) -> Result<UpdateView, String> {
-    updates::set_token(&app, token).await?;
-    tauri::async_runtime::spawn_blocking(move || updates::check(&app)).await.map_err(|e| e.to_string())
-}
-
 #[tauri::command]
 pub fn updates_open_release(app: AppHandle) -> CmdResult {
     updates::open_release(&app)

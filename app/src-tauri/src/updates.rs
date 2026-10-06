@@ -1,8 +1,7 @@
 //! Update notification (SPEC 9.7): on launch and every 24 hours, ask GitHub for the latest
 //! release ([`tyst_runtime::update`]). A newer version shows as a dot on the tray icon, a tray
 //! menu line and in Settings › Updates with its notes and a link to the release page. Nothing is
-//! downloaded or installed. While the repository is private the check needs a GitHub token,
-//! kept in the keychain ([`crate::secrets`]).
+//! downloaded or installed.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -26,7 +25,6 @@ pub struct UpdateView {
     /// This build's version (or `TYST_PRETEND_VERSION`, for testing the notification).
     pub current: String,
     pub enabled: bool,
-    pub has_token: bool,
     pub checking: bool,
     /// Local time of the last finished check, `YYYY-MM-DD HH:MM`.
     pub last_checked: Option<String>,
@@ -54,7 +52,6 @@ impl Updates {
         let mut v = self.view.lock().expect("updates lock").clone();
         v.current = current_version();
         v.enabled = cfg.updates.check;
-        v.has_token = cfg.updates.github_token;
         v
     }
 
@@ -96,21 +93,9 @@ pub fn check(app: &AppHandle) -> UpdateView {
         v.checking = true;
     }
     emit(app);
-    let cfg = app.state::<AppState>().config();
-    let token = if cfg.updates.github_token {
-        match tauri::async_runtime::block_on(secrets::get(secrets::GITHUB_TOKEN)) {
-            Ok(t) => t,
-            Err(e) => {
-                log::warn!("GitHub token: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
     let current = current_version();
     let agent = format!("Tyst/{}", env!("CARGO_PKG_VERSION"));
-    let result = update::latest_release(update::REPO, token.as_deref(), &agent);
+    let result = update::latest_release(update::REPO, &agent);
     {
         let mut v = updates.view.lock().expect("updates lock");
         v.checking = false;
@@ -138,18 +123,20 @@ fn emit(app: &AppHandle) {
     let _ = app.emit(UPDATES_EVENT, app.state::<Updates>().view(app));
 }
 
-/// Stores or removes the GitHub token (keychain), then checks again.
-pub async fn set_token(app: &AppHandle, token: Option<String>) -> Result<(), String> {
-    let token = token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-    if let Some(t) = &token
-        && (t.len() > 255 || !t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
-    {
-        return Err("That does not look like a GitHub token.".into());
+/// Removes the GitHub token versions up to 0.1.0 kept in the keychain for the private repository.
+/// The check is anonymous now; the config remembers whether one was stored, so the keychain is
+/// only asked when there is something to delete.
+pub async fn forget_legacy_token(app: &AppHandle) {
+    if !app.state::<AppState>().config().updates.github_token {
+        return;
     }
-    secrets::set(secrets::GITHUB_TOKEN, token.as_deref()).await?;
-    app.state::<AppState>().update_config(|c| c.updates.github_token = token.is_some());
-    emit(app);
-    Ok(())
+    match secrets::set(secrets::LEGACY_GITHUB_TOKEN, None).await {
+        Ok(()) => {
+            app.state::<AppState>().update_config(|c| c.updates.github_token = false);
+            log::info!("removed the old GitHub token from the keychain");
+        }
+        Err(e) => log::warn!("removing the old GitHub token: {e}"),
+    }
 }
 
 /// Opens the latest release's page in the browser.

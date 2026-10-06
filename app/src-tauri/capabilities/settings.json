@@ -23,7 +23,6 @@
     "allow-pick-folder",
     "allow-updates-check",
     "allow-updates-open-release",
-    "allow-updates-set-token",
     "allow-updates-state",
     "allow-vocabulary-export",
     "allow-vocabulary-get",
