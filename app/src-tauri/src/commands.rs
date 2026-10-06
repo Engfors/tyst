@@ -119,7 +119,8 @@ fn inside(dir: &std::path::Path, path: &str) -> CmdResult<std::path::PathBuf> {
 #[tauri::command]
 pub fn open_transcripts_folder(app: AppHandle) -> CmdResult {
     let dir = app.state::<AppState>().config().transcripts_dir.ok_or("No transcripts folder chosen yet.")?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // A folder created here is `0700`, like the ones meeting saves create; an existing one keeps its mode.
+    tyst_core::private_fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     open(&app, &dir)
 }
 
@@ -493,15 +494,21 @@ pub async fn audio_test(app: AppHandle, channel: String, seconds: Option<f32>) -
 #[tauri::command]
 pub fn onboarding_finish(app: AppHandle) -> CmdResult {
     let st = app.state::<AppState>();
-    let cfg = {
+    let (cfg, first) = {
         let mut cfg = st.config.lock().expect("config lock");
+        let first = !cfg.onboarded;
         cfg.onboarded = true;
-        cfg.clone()
+        (cfg.clone(), first)
     };
     cfg.save()?;
     apply_autostart(&app, cfg.launch_at_login);
     windows::close(&app, windows::ONBOARDING);
     AppState::preload(&app);
+    // A launch that was already onboarded started these in `main`; start them once now so options
+    // turned on during onboarding work without a restart.
+    if first {
+        crate::start_background(&app);
+    }
     Ok(())
 }
 

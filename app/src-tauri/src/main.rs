@@ -149,9 +149,7 @@ fn main() {
                 }
                 let args: Vec<String> = std::env::args().collect();
                 handle_args(&handle, &args);
-                updates::start(&handle);
-                detect::start(&handle);
-                AppState::unload_when_idle(&handle);
+                start_background(&handle);
                 std::thread::spawn(move || offer_recovery(&handle));
             }
             Ok(())
@@ -168,6 +166,14 @@ fn main() {
         }
         _ => {}
     });
+}
+
+/// Background tasks of an onboarded app: update check, meeting detection, idle model unload. Each
+/// reads the settings on every pass, so they run whether or not their option is on.
+pub(crate) fn start_background(app: &AppHandle) {
+    updates::start(app);
+    detect::start(app);
+    AppState::unload_when_idle(app);
 }
 
 /// Command-line actions, for desktop shortcuts and scripts: `tyst --toggle-meeting` starts or

@@ -11,6 +11,7 @@ pub mod engine;
 pub mod fetch;
 pub mod meeting;
 pub mod playback;
+mod queue;
 pub mod sources;
 pub mod update;
 

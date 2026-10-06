@@ -6,7 +6,7 @@
 //! to decode, and partial decodes stop the moment the user does. The captured audio is kept (up
 //! to [`MAX_KEPT_AUDIO`]) so the pill can re-transcribe it in another language.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -20,6 +20,7 @@ use tyst_core::transcript::Lang;
 use tyst_platform::{AudioChunk, CaptureError};
 
 use crate::meeting::SourceFactory;
+use crate::queue::{Queue, chunk_ms};
 use crate::{Error, Result};
 
 /// Audio kept for re-transcription; longer dictations keep only their first five minutes.
@@ -134,20 +135,34 @@ impl Dictation {
             finish_at: Mutex::new(None),
         });
         let (audio_tx, audio_rx) = mpsc::channel::<AudioChunk>();
+        // Milliseconds of audio sent to the worker and not yet taken: what keeps the queue bounded.
+        let backlog = Arc::new(AtomicU64::new(0));
         let (control, control_rx) = mpsc::channel::<()>();
         let (started_tx, started_rx) = mpsc::sync_channel::<Result<String, CaptureError>>(1);
         let capture = {
             let shared = shared.clone();
+            let backlog = backlog.clone();
             std::thread::Builder::new()
                 .name("tyst-dictation-capture".into())
-                .spawn(move || capture_thread(source, audio_tx, control_rx, started_tx, shared))
+                .spawn(move || {
+                    let on_behind = {
+                        let shared = shared.clone();
+                        Box::new(move || {
+                            shared.emit(DictationEvent::CaptureError {
+                                message: "Transcription is falling behind; some audio is skipped.".into(),
+                            })
+                        })
+                    };
+                    let queue = Queue::new("dictation".into(), audio_tx, backlog, on_behind);
+                    capture_thread(source, queue, control_rx, started_tx, shared)
+                })
                 .map_err(|e| Error::Other(e.to_string()))?
         };
         let worker = {
             let shared = shared.clone();
             std::thread::Builder::new()
                 .name("tyst-dictation-worker".into())
-                .spawn(move || worker_thread(pipeline, audio_rx, shared))
+                .spawn(move || worker_thread(pipeline, audio_rx, backlog, shared))
                 .map_err(|e| Error::Other(e.to_string()))?
         };
         let device = match started_rx.recv() {
@@ -218,11 +233,12 @@ impl Drop for Dictation {
 
 fn capture_thread(
     factory: SourceFactory,
-    sink: Sender<AudioChunk>,
+    mut queue: Queue,
     control: Receiver<()>,
     started: mpsc::SyncSender<Result<String, CaptureError>>,
     shared: Arc<Shared>,
 ) {
+    let (sink, raw) = mpsc::channel::<AudioChunk>();
     let mut source = match factory().and_then(|mut s| s.start(sink).map(|_| s)) {
         Ok(s) => {
             let _ = started.send(Ok(s.device_name()));
@@ -233,19 +249,31 @@ fn capture_thread(
             return;
         }
     };
+    let mut next_poll = Instant::now() + POLL_INTERVAL;
     loop {
-        match control.recv_timeout(POLL_INTERVAL) {
-            Err(RecvTimeoutError::Timeout) => {
-                if let Err(e) = source.poll() {
-                    log::warn!("dictation capture: {e}");
-                    shared.emit(DictationEvent::CaptureError { message: e.to_string() });
-                }
+        if let Ok(chunk) = raw.recv_timeout(Duration::from_millis(20)) {
+            queue.push(chunk);
+            for chunk in raw.try_iter() {
+                queue.push(chunk);
             }
-            Ok(()) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
+        }
+        match control.try_recv() {
+            Ok(()) | Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => break,
+        }
+        if Instant::now() >= next_poll {
+            next_poll = Instant::now() + POLL_INTERVAL;
+            if let Err(e) = source.poll() {
+                log::warn!("dictation capture: {e}");
+                shared.emit(DictationEvent::CaptureError { message: e.to_string() });
+            }
         }
     }
     let _ = source.stop();
+    drop(source);
+    for chunk in raw.try_iter() {
+        queue.push(chunk);
+    }
 }
 
 /// Running text: finals in order plus the open segment's partial.
@@ -268,6 +296,7 @@ fn join<'a>(parts: impl Iterator<Item = &'a str>) -> String {
 fn worker_thread<D: SpeechDetector>(
     mut pipeline: ChannelPipeline<D>,
     rx: Receiver<AudioChunk>,
+    backlog: Arc<AtomicU64>,
     shared: Arc<Shared>,
 ) -> Result<Dictated> {
     let max_kept = (MAX_KEPT_AUDIO.as_secs_f64() * SAMPLE_RATE as f64) as usize;
@@ -318,6 +347,7 @@ fn worker_thread<D: SpeechDetector>(
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
         };
+        backlog.fetch_sub(chunk_ms(&chunk), Ordering::SeqCst);
         if shared.cancelled.load(Ordering::SeqCst) {
             continue; // drain without decoding
         }

@@ -1,7 +1,7 @@
 # Phase 5 report: polish and release
 
-- **Status:** Accepted on Arch Linux / KDE Plasma (Wayland) by the owner on 2026-10-04 (section 8).
-  macOS items compile and are checked in CI, and wait for the owner's Mac.
+- **Status:** Accepted on Arch Linux / KDE Plasma (Wayland) by the owner on 2026-10-04 (section 8),
+  and on an M1 Max for the v0.1.0 release on 2026-10-05 (section 9).
 - **Code:** `crates/tyst-runtime/src/{echo,update,meeting}.rs`, `crates/tyst-platform/src/mic_watch.rs`,
   `crates/tyst-cli/src/echo_cmd.rs`, `app/src-tauri/src/{detect,secrets,updates}.rs` and the
   Settings, pill and onboarding pages; `.github/workflows/{ci,release}.yml`, `packaging/`,
@@ -14,7 +14,7 @@
 | Echo cancellation (SPEC 6.4) | `tyst_runtime::echo`, wired into `Meeting` | Built, on by default |
 | Opt-in meeting auto-detection (SPEC 8.3, 9.4) | `tyst_platform::mic_watch`, `detect.rs`, pill prompt | Built, off by default |
 | Update notification (SPEC 9.7) | `tyst_runtime::update`, `updates.rs`, tray, Settings › Updates | Built |
-| macOS "only meeting apps" filter (SPEC 15 q7) | — | Deferred until the owner is on the Mac |
+| macOS "only meeting apps" filter (SPEC 15 q7) | `tyst_runtime::sources`, `tyst_platform::macos_tap`, `config.rs` | Shipped in v0.1.0, on by default (section 9) |
 | README with screenshots | `README.md`, `docs/screenshots/` | Built |
 | THIRD_PARTY_NOTICES and About attributions (SPEC 13) | `packaging/notices/`, Settings › About | Built |
 | Release workflow: macOS .app/.dmg and Linux AppImage on tag | `.github/workflows/release.yml` | Built; first real run on the first tag |
@@ -102,6 +102,10 @@ only when the user asks.
 
 ## 7. Open
 
+*Historical: this was the state at Phase 5 acceptance (2026-10-04). Both items were done for v0.1.0:
+the filter ships on by default and the Mac was tested (section 9), and the release assets are
+GPG-signed.*
+
 - macOS: the "only meeting apps" system-audio filter (SPEC 15 q7), and an owner test of echo
   cancellation, detection and the DMG.
 - The first real release needs the `RELEASE_GPG_KEY` and `RELEASE_GPG_PASSPHRASE` secrets.
@@ -113,3 +117,19 @@ token moving into KWallet, echo cancellation in the app with a video on speakers
 every meeting detection step, idle unloading, the update check with and without a token, the About
 page and notices, the signing key setup and a signed release dry run. A real Teams call on speakers
 (run 3B) was not tested. The update-available notice (run 8C) waits for the first published release.
+
+## 9. macOS acceptance (M1 Max, 2026-10-05)
+
+The owner tested the Apple silicon DMG built from the v0.1.0 tree on an M1 Max with
+`/mnt/project-files/macos/mac-test-steps.md`. Two runs found the missing microphone entitlement, an
+AirPods rate switch that left gaps in Others, pill paste and focus problems; all were fixed in #19
+before the tag, and the re-tests passed.
+
+- **Tested and passed:** installing and opening the DMG, onboarding, microphone access, meetings in
+  Teams and Google Meet, output and input switches (MacBook speakers and AirPods), crash recovery,
+  restoring the window, the "only meeting apps" filter (SPEC 15 q7, decided on by default),
+  dictation and paste, echo cancellation on the MacBook speakers, meeting detection, the keychain,
+  the About page, and the CLI measurements (partial p95 0.43 s, final 0.63 s, dictation stop to
+  text p50 0.24 s).
+- **Not tested on the Mac:** the update-available notice (tested on Arch, run 8C) and building the
+  app from source.

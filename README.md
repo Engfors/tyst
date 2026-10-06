@@ -6,7 +6,8 @@ to download the speech models and, if you leave update checks on, to ask GitHub 
 version.
 
 Status: **v0.1.0**, the first release (see [CHANGELOG.md](CHANGELOG.md)). All phases are accepted on
-Linux, tested on Arch (KDE Plasma, Wayland, PipeWire); macOS testing is pending. See [SPEC.md](SPEC.md)
+Linux, tested on Arch (KDE Plasma, Wayland, PipeWire); the Apple silicon build was tested on an M1 Max
+([what was run](docs/phase5-report.md#9-macos-acceptance-m1-max-2026-10-05)). See [SPEC.md](SPEC.md)
 for the specification and the phase reports: [5](docs/phase5-report.md) (echo cancellation, meeting
 detection, updates, releases), [4](docs/phase4-report.md) (AppImage), [3](docs/phase3-report.md) (dictation),
 [2](docs/phase2-report.md) (meeting app), [1](docs/phase1-report.md) (pipeline measurements) and
@@ -123,6 +124,11 @@ Models live outside the repo: `~/Library/Application Support/Tyst/models` on mac
 `~/.local/share/tyst/models` on Linux, or `$TYST_MODELS`. After downloading, `models fetch` also writes
 `encoder-model.banded.int8.onnx`: the same Pianissimo encoder with its local attention computed without
 256-frame block padding (same outputs, much less work for short segments; `tyst_core::encoder_rewrite`).
+
+Model files are checked against their pinned SHA-256 when they are downloaded, and hashed again when
+a file's size or modification time changes. A normal start compares only those, not the full hash;
+`tyst-cli models verify --full` hashes every file again. This catches corrupt or partial downloads,
+not another program running as you that rewrites the files.
 
 ## License and attribution
 
