@@ -77,6 +77,7 @@ and check it against the signed checksums:
 
 ```sh
 gpg --import tyst-release-key.asc
+gpg --fingerprint 'Tyst releases'   # must be 6603 C039 2634 8BD9 8CE7  68DE E35B FE2B 59EC A014
 gpg --verify SHA256SUMS.asc SHA256SUMS && sha256sum --check --ignore-missing SHA256SUMS
 install -Dm755 Tyst_*_amd64.AppImage ~/.local/share/AppImage/Tyst.AppImage
 ~/.local/share/AppImage/Tyst.AppImage
