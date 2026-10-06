@@ -28,6 +28,7 @@ use tyst_core::transcript::{
 use tyst_platform::{AudioChunk, AudioSource, CaptureError};
 
 use crate::echo::{Block, EchoCanceller, EchoReference};
+use crate::queue::{Queue, chunk_ms};
 use crate::{Result, Runtime};
 
 /// Builds a source on its capture thread.
@@ -38,44 +39,6 @@ const GAP: Duration = Duration::from_secs(1);
 /// Level meter update interval.
 const LEVEL_INTERVAL: usize = SAMPLE_RATE as usize / 10;
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
-/// Audio waiting for the worker beyond this: quiet chunks are dropped (SPEC 11: 3-hour
-/// meetings without memory growth).
-const SOFT_BACKLOG_MS: u64 = 10_000;
-/// Beyond this every chunk is dropped, with a warning, until the worker catches up. About 23 MB
-/// of 48 kHz mono audio per channel.
-const HARD_BACKLOG_MS: u64 = 120_000;
-/// RMS below this counts as silence for dropping (about -54 dBFS).
-const SILENCE_RMS: f32 = 0.002;
-
-/// What the capture thread does with a chunk, given how much audio already waits.
-#[derive(Debug, PartialEq, Eq)]
-enum Admit {
-    Keep,
-    DropSilence,
-    DropBehind,
-}
-
-fn admit(backlog_ms: u64, rms: f32) -> Admit {
-    if backlog_ms >= HARD_BACKLOG_MS {
-        Admit::DropBehind
-    } else if backlog_ms >= SOFT_BACKLOG_MS && rms < SILENCE_RMS {
-        Admit::DropSilence
-    } else {
-        Admit::Keep
-    }
-}
-
-fn chunk_ms(c: &AudioChunk) -> u64 {
-    c.samples.len() as u64 * 1000 / c.sample_rate.max(1) as u64
-}
-
-fn rms(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    (samples.iter().map(|x| x * x).sum::<f32>() / samples.len() as f32).sqrt()
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum MeetingEvent {
     /// Replaces the previous partial of the same segment.
@@ -485,7 +448,17 @@ fn spawn_channel<D: SpeechDetector + 'static>(
         std::thread::Builder::new()
             .name(format!("tyst-capture-{channel:?}"))
             .spawn(move || {
-                let queue = Queue { channel, tx: source_tx, backlog, behind: false, dropped_ms: 0 };
+                let on_behind = {
+                    let shared = shared.clone();
+                    Box::new(move || {
+                        shared.emit(MeetingEvent::Error {
+                            channel: Some(channel),
+                            message: "Transcription is falling behind; some audio is skipped until it catches up."
+                                .into(),
+                        })
+                    })
+                };
+                let queue = Queue::new(format!("{channel:?}"), source_tx, backlog, on_behind);
                 capture_thread(channel, factory, queue, control_rx, started_tx, shared)
             })
             .map_err(|e| CaptureError::Device(e.to_string()))?
@@ -509,47 +482,6 @@ fn spawn_channel<D: SpeechDetector + 'static>(
             Err(e)
         }
         Err(_) => Err(CaptureError::Device("capture thread exited".into())),
-    }
-}
-
-/// The capture side of a channel's audio queue. Sources push into an unbounded channel of their
-/// own; the capture thread moves chunks on to the worker only while the worker keeps up.
-struct Queue {
-    channel: Channel,
-    tx: Sender<AudioChunk>,
-    backlog: Arc<AtomicU64>,
-    /// Dropping everything (hard limit reached) until the worker catches up.
-    behind: bool,
-    dropped_ms: u64,
-}
-
-impl Queue {
-    fn push(&mut self, chunk: AudioChunk, shared: &Shared) {
-        let ms = chunk_ms(&chunk);
-        let backlog = self.backlog.load(Ordering::SeqCst);
-        if self.behind && backlog < SOFT_BACKLOG_MS {
-            self.behind = false;
-            log::warn!("{:?}: recognizer caught up; {} ms of audio were skipped", self.channel, self.dropped_ms);
-            self.dropped_ms = 0;
-        }
-        match admit(backlog, rms(&chunk.samples)) {
-            Admit::Keep if !self.behind => {
-                self.backlog.fetch_add(ms, Ordering::SeqCst);
-                let _ = self.tx.send(chunk);
-            }
-            Admit::DropSilence => {}
-            Admit::Keep | Admit::DropBehind => {
-                if !self.behind {
-                    self.behind = true;
-                    log::warn!("{:?}: recognizer is {} ms behind, skipping audio", self.channel, backlog);
-                    shared.emit(MeetingEvent::Error {
-                        channel: Some(self.channel),
-                        message: "Transcription is falling behind; some audio is skipped until it catches up.".into(),
-                    });
-                }
-                self.dropped_ms += ms;
-            }
-        }
     }
 }
 
@@ -601,9 +533,9 @@ fn capture_thread(
     let mut next_poll = Instant::now() + POLL_INTERVAL;
     loop {
         if let Ok(chunk) = raw.recv_timeout(Duration::from_millis(50)) {
-            queue.push(chunk, &shared);
+            queue.push(chunk);
             for chunk in raw.try_iter() {
-                queue.push(chunk, &shared);
+                queue.push(chunk);
             }
         }
         match control.try_recv() {
@@ -631,7 +563,7 @@ fn capture_thread(
     let _ = source.stop();
     drop(source);
     for chunk in raw.try_iter() {
-        queue.push(chunk, &shared);
+        queue.push(chunk);
     }
 }
 
@@ -786,57 +718,6 @@ mod tests {
     use tyst_core::vocabulary::VocabularyRules;
 
     use super::*;
-
-    #[test]
-    fn queue_drops_silence_then_everything_when_far_behind() {
-        assert_eq!(admit(0, 0.0), Admit::Keep);
-        assert_eq!(admit(SOFT_BACKLOG_MS, 0.5), Admit::Keep);
-        assert_eq!(admit(SOFT_BACKLOG_MS, 0.0), Admit::DropSilence);
-        assert_eq!(admit(HARD_BACKLOG_MS, 0.5), Admit::DropBehind);
-    }
-
-    #[test]
-    fn queue_stays_bounded_and_warns_once() {
-        let (events_tx, events_rx) = mpsc::channel();
-        let shared = Shared {
-            started: Instant::now(),
-            paused: AtomicBool::new(false),
-            dictating: AtomicBool::new(false),
-            mode: AtomicU8::new(0),
-            recorder: Mutex::new(Recorder::default()),
-            events: events_tx,
-        };
-        let (tx, rx) = mpsc::channel();
-        let backlog = Arc::new(AtomicU64::new(0));
-        let mut q = Queue { channel: Channel::Others, tx, backlog: backlog.clone(), behind: false, dropped_ms: 0 };
-        // A worker that never takes anything: 10 minutes of speech at 48 kHz, 100 ms chunks.
-        for _ in 0..6000 {
-            let chunk = AudioChunk {
-                channel: Channel::Others,
-                sample_rate: 48_000,
-                samples: vec![0.1; 4800],
-                captured_at: Instant::now(),
-            };
-            q.push(chunk, &shared);
-        }
-        assert_eq!(backlog.load(Ordering::SeqCst), HARD_BACKLOG_MS);
-        assert_eq!(rx.try_iter().count() as u64, HARD_BACKLOG_MS / 100);
-        let warnings = events_rx.try_iter().filter(|e| matches!(e, MeetingEvent::Error { .. })).count();
-        assert_eq!(warnings, 1);
-        // The worker catches up: audio flows again.
-        backlog.store(0, Ordering::SeqCst);
-        q.push(
-            AudioChunk {
-                channel: Channel::Others,
-                sample_rate: 48_000,
-                samples: vec![0.1; 4800],
-                captured_at: Instant::now(),
-            },
-            &shared,
-        );
-        assert!(!q.behind);
-        assert_eq!(rx.try_iter().count(), 1);
-    }
 
     struct FakeEngine;
 
