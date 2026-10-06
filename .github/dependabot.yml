@@ -1,11 +1,19 @@
 # Keeps the SHA-pinned actions current (issue #14, CI-001). Security updates for Cargo and npm
 # come from Dependabot security updates in the repository settings, without version-bump noise.
+#
+# dtolnay/rust-toolchain is pinned to a commit with no version tag (`# stable` is the toolchain
+# channel, so CI still gets current stable Rust), which Dependabot cannot version: bump that SHA by
+# hand from the action's `master` branch now and then.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    # Waits a week after an action release before proposing it, so a compromised tag has time to
+    # be noticed (#35).
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]

@@ -38,5 +38,6 @@ Every release has a `SHA256SUMS` file signed with the Tyst release key. The key'
 6603 C039 2634 8BD9 8CE7  68DE E35B FE2B 59EC A014
 ```
 
-Check it after importing `tyst-release-key.asc` (`gpg --fingerprint`) and before trusting the signature;
-the [README](README.md#appimage-linux) has the full steps.
+Don't trust a good signature alone: the key file comes with the release, so check that the signature's
+fingerprint is the one above. The [README](README.md#appimage-linux) has a copy-paste check that fails
+on any other key.

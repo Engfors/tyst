@@ -63,10 +63,12 @@ asked about once, and only while Tyst is idle. Tyst's own streams are left out.
 On launch (after 20 s) and every 24 hours Tyst calls the GitHub releases API for
 `Engfors/tyst` and compares versions (semver). A newer release shows a blue dot on the tray
 icon, an "Update available" tray item and Settings › Updates with the notes and a link to the
-release page. Nothing is downloaded or installed. While the repository is private the request needs
-a fine-grained token with read access to its contents; it is stored in the keychain (Secret Service
-on Linux, the login keychain on macOS) and only ever sent to `api.github.com`. Settings can turn
-the check off. `TYST_PRETEND_VERSION=0.0.1` makes any release look newer, for testing.
+release page. Nothing is downloaded or installed. Settings can turn the check off.
+
+*0.1.0 only: while the repository was private the request needed a fine-grained token with read
+access to its contents, stored in the keychain (Secret Service on Linux, the login keychain on macOS)
+and only ever sent to `api.github.com`. Since 0.1.1 the check is anonymous and the old token is
+deleted from the keychain on start.* `TYST_PRETEND_VERSION=0.0.1` makes any release look newer, for testing.
 
 The keyboard portal's restore token (Linux paste) moved into the same keychain (#8). An existing
 token in `config.toml` is moved on the first start and removed from the file; the config only
