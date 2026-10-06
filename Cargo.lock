@@ -5590,7 +5590,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "tyst-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "env_logger",
@@ -5615,7 +5615,7 @@ dependencies = [
 
 [[package]]
 name = "tyst-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5633,7 +5633,7 @@ dependencies = [
 
 [[package]]
 name = "tyst-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "log",
@@ -5651,7 +5651,7 @@ dependencies = [
 
 [[package]]
 name = "tyst-platform"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arboard",
  "ashpd",
@@ -5675,7 +5675,7 @@ dependencies = [
 
 [[package]]
 name = "tyst-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "log",
