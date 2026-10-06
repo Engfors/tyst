@@ -6,7 +6,7 @@ set -euo pipefail
 out=${GITHUB_OUTPUT:-/dev/stdout}
 if [ -z "${KEY:-}" ]; then
   if [ "${REF_TYPE:-}" = tag ]; then
-    echo "::error::RELEASE_GPG_KEY is not set; a release must be signed"
+    echo "::error::RELEASE_GPG_KEY is not set in the release environment; a release must be signed"
     exit 1
   fi
   echo "no RELEASE_GPG_KEY: building unsigned (dry run)"

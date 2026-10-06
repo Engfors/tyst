@@ -25,22 +25,11 @@
   let meetingApps = $state("");
   let infoTimer: ReturnType<typeof setInterval> | undefined;
   let updates = $state<UpdateView | null>(null);
-  let token = $state("");
   let unlistenUpdates: (() => void) | undefined;
 
   async function checkNow() {
     try {
       updates = await api.updatesCheck();
-    } catch (e) {
-      status = errorText(e);
-    }
-  }
-
-  async function saveToken(value: string | null) {
-    try {
-      updates = await api.updatesSetToken(value);
-      token = "";
-      status = value ? "Token saved in the keychain." : "Token removed.";
     } catch (e) {
       status = errorText(e);
     }
@@ -350,21 +339,6 @@
               <pre class="notes">{updates.latest.notes}</pre>
             </div>
           {/if}
-          <div class="field">
-            <span class="name">GitHub token</span>
-            {#if updates.has_token}
-              <div class="row">
-                <span class="ok">Saved in the keychain</span>
-                <button onclick={() => saveToken(null)}>Remove</button>
-              </div>
-            {:else}
-              <div class="row">
-                <input type="password" class="mono" placeholder="github_pat_…" bind:value={token} autocomplete="off" />
-                <button onclick={() => saveToken(token)} disabled={!token.trim()}>Save</button>
-              </div>
-            {/if}
-            <span class="muted small">Only needed while the repository is private: a fine-grained token with read access to its contents. It is kept in the system keychain and only sent to GitHub.</span>
-          </div>
         {/if}
         <p class="muted small">Tyst only tells you about a new version; it never downloads or installs anything by itself.</p>
       {:else if tab === "about"}

@@ -44,7 +44,7 @@ cargo build --release -p tyst-cli
 ./target/release/tyst-cli live --simulate clip.wav        # same, with a file played in real time
 ./target/release/tyst-cli meeting --mic --system          # two-channel meeting, no UI, echo cancelled
 ./target/release/tyst-cli echo-cancel --mic me.wav --system others.wav --out clean.wav   # offline AEC
-./target/release/tyst-cli check-update                    # GitHub latest release ($GITHUB_TOKEN)
+./target/release/tyst-cli check-update                    # GitHub latest release
 (cd app/ui && npm ci && npm run check && npm run tauri build -- --no-bundle)   # app -> target/release/tyst
 packaging/linux/fetch-tools.sh                            # pinned, hash-checked AppImage tools
 (cd app/ui && NO_STRIP=true npm run tauri build -- --bundles appimage)          # Linux AppImage (CI artifact too)

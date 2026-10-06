@@ -1,5 +1,5 @@
-//! Secrets in the OS keychain (SPEC 11): the GitHub token for the update check (SPEC 9.7) and the
-//! keyboard portal's restore token (Linux, issue #8). Linux uses the Secret Service API (KDE
+//! Secrets in the OS keychain (SPEC 11): the keyboard portal's restore token (Linux, issue #8), and
+//! the cleanup of the update check's old GitHub token. Linux uses the Secret Service API (KDE
 //! Wallet, GNOME Keyring), macOS the login keychain. Values never go into the config, the logs or
 //! the UI; the config only remembers *that* a secret was stored, so nothing asks the keychain
 //! (which may ask the user to unlock it) before a secret is needed.
@@ -10,8 +10,8 @@ use tauri::{AppHandle, Manager};
 
 use crate::state::AppState;
 
-/// The GitHub token for the update check while the repository is private.
-pub const GITHUB_TOKEN: &str = "github-token";
+/// The GitHub token versions up to 0.1.0 stored for the update check; only ever deleted now.
+pub const LEGACY_GITHUB_TOKEN: &str = "github-token";
 /// The RemoteDesktop portal's restore token, so paste does not ask for consent again.
 pub const KEYBOARD_TOKEN: &str = "keyboard-portal-token";
 

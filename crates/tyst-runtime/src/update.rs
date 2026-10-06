@@ -1,7 +1,7 @@
 //! Update check (SPEC 9.7): asks GitHub for the repository's latest release and compares its
 //! version with this build. This is the second of the two network uses SPEC 0 allows; it sends
-//! nothing but the request (and the token, when the repository is private), never installs
-//! anything, and the app lets the user turn it off.
+//! nothing but an anonymous request, never installs anything, and the app lets the user turn it
+//! off.
 
 use std::time::Duration;
 
@@ -37,21 +37,17 @@ struct ApiRelease {
 }
 
 /// The newest published release (GitHub's "latest": not a draft, not a pre-release).
-/// `token` is needed while the repository is private.
-pub fn latest_release(repo: &str, token: Option<&str>, user_agent: &str) -> Result<Release> {
+pub fn latest_release(repo: &str, user_agent: &str) -> Result<Release> {
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
     let agent = crate::fetch::agent_with_timeout(Duration::from_secs(20));
-    let mut req = agent
+    let req = agent
         .get(&url)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("User-Agent", user_agent);
-    if let Some(t) = token.filter(|t| !t.trim().is_empty()) {
-        req = req.header("Authorization", &format!("Bearer {}", t.trim()));
-    }
     let resp = match req.call() {
         Ok(r) => r,
-        Err(ureq::Error::StatusCode(code)) => return Err(Error::Other(status_message(code, token.is_some()))),
+        Err(ureq::Error::StatusCode(code)) => return Err(Error::Other(status_message(code))),
         Err(e) => return Err(Error::Other(format!("update check: {e}"))),
     };
     let api: ApiRelease = resp
@@ -81,12 +77,10 @@ pub fn latest_release(repo: &str, token: Option<&str>, user_agent: &str) -> Resu
     })
 }
 
-fn status_message(code: u16, with_token: bool) -> String {
+fn status_message(code: u16) -> String {
     match code {
-        401 => "The GitHub token was rejected. Check it in Settings › Updates.".into(),
         403 | 429 => "GitHub refused the update check for now (rate limit). Tyst tries again later.".into(),
-        404 if with_token => "No release found. The token may not have access to the repository.".into(),
-        404 => "No release found. While the repository is private, the check needs a GitHub token.".into(),
+        404 => "No release found on GitHub yet.".into(),
         c => format!("update check: GitHub answered {c}"),
     }
 }
@@ -121,7 +115,7 @@ mod tests {
 
     #[test]
     fn explains_github_errors() {
-        assert!(status_message(404, false).contains("token"));
-        assert!(status_message(401, true).contains("rejected"));
+        assert!(status_message(404).contains("No release"));
+        assert!(status_message(429).contains("rate limit"));
     }
 }

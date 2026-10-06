@@ -42,7 +42,6 @@ const COMMANDS: &[&str] = &[
     "show_settings",
     "updates_check",
     "updates_open_release",
-    "updates_set_token",
     "updates_state",
     "vocabulary_export",
     "vocabulary_get",

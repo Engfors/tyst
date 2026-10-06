@@ -7,8 +7,9 @@ name: Release
 # Running the workflow by hand, or a pull request that changes the release workflow or the
 # packaging scripts, builds and signs everything as a dry run, without a release.
 #
-# Secrets: RELEASE_GPG_KEY (ASCII-armoured private key) and RELEASE_GPG_PASSPHRASE. A tag
-# without them fails; a dry run without them builds unsigned.
+# Secrets: RELEASE_GPG_KEY (ASCII-armoured private key) and RELEASE_GPG_PASSPHRASE, kept in the
+# `release` environment, which only admits `v*` tags. Only tag runs enter it, so dry runs never
+# see the key and build unsigned; a tag without the secrets fails.
 
 on:
   push:
@@ -57,6 +58,8 @@ jobs:
     name: AppImage (Linux)
     needs: version
     runs-on: ubuntu-24.04
+    # The signing key lives in the `release` environment; dry runs stay outside it.
+    environment: ${{ github.ref_type == 'tag' && 'release' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -151,6 +154,8 @@ jobs:
     name: Checksums, signature and draft release
     needs: [version, linux, macos]
     runs-on: ubuntu-latest
+    # The signing key lives in the `release` environment; dry runs stay outside it.
+    environment: ${{ github.ref_type == 'tag' && 'release' || '' }}
     # The only job that can write to the repository (issue #14, PR7-003).
     permissions:
       contents: write

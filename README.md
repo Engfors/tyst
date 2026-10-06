@@ -40,7 +40,7 @@ cargo build --release -p tyst-cli
 ./target/release/tyst-cli meeting --mic --system # two-channel meeting without the UI, echo cancelled
 ./target/release/tyst-cli dictate --mic          # dictation without the pill: Enter starts and stops
 ./target/release/tyst-cli echo-cancel --mic me.wav --system others.wav --out me-clean.wav
-./target/release/tyst-cli check-update           # asks GitHub for the latest release ($GITHUB_TOKEN while private)
+./target/release/tyst-cli check-update           # asks GitHub for the latest release
 ```
 
 ## Meeting app
@@ -65,8 +65,7 @@ PipeWire. `tyst-cli meeting --mic --system` runs the same session without the UI
   another app from your list starts using the microphone, Tyst asks whether to transcribe. It never
   starts on its own.
 - **Updates** (Settings › Updates): once a day Tyst asks GitHub whether there is a newer release and
-  shows it in the tray and in Settings. It never downloads or installs anything. While the repository
-  is private the check needs a GitHub token with read access, kept in the system keychain.
+  shows it in the tray and in Settings. It never downloads or installs anything.
 - **Models in memory** (Settings › General): unload the models after a few idle minutes to free
   about 1 GB; they load again when you next start.
 

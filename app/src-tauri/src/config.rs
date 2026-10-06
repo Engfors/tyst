@@ -38,7 +38,8 @@ pub struct Config {
 pub struct UpdateSettings {
     /// Ask GitHub for a newer release on launch and once a day.
     pub check: bool,
-    /// A GitHub token is in the keychain (needed while the repository is private).
+    /// A GitHub token from versions up to 0.1.0 may still be in the keychain; the app deletes it
+    /// on start ([`crate::updates::forget_legacy_token`]).
     pub github_token: bool,
 }
 
