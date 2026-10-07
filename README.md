@@ -5,7 +5,7 @@ including mixed-language meetings. Nothing leaves the device: Tyst only goes onl
 to download the speech models and, if you leave update checks on, to ask GitHub for the latest
 version.
 
-Status: **v0.1.0**, the first release (see [CHANGELOG.md](CHANGELOG.md)). All phases are accepted on
+Status: **v0.1.1** (see [CHANGELOG.md](CHANGELOG.md)). All phases are accepted on
 Linux, tested on Arch (KDE Plasma, Wayland, PipeWire); the Apple silicon build was tested on an M1 Max
 ([what was run](docs/phase5-report.md#9-macos-acceptance-m1-max-2026-10-05)). See [SPEC.md](SPEC.md)
 for the specification and the phase reports: [5](docs/phase5-report.md) (echo cancellation, meeting
@@ -77,8 +77,10 @@ and check it against the signed checksums:
 
 ```sh
 gpg --import tyst-release-key.asc
-gpg --fingerprint 'Tyst releases'   # must be 6603 C039 2634 8BD9 8CE7  68DE E35B FE2B 59EC A014
-gpg --verify SHA256SUMS.asc SHA256SUMS && sha256sum --check --ignore-missing SHA256SUMS
+# Fails unless SHA256SUMS is signed by the Tyst release key, whatever the key file says it is.
+gpg --status-fd 1 --verify SHA256SUMS.asc SHA256SUMS 2>/dev/null \
+  | grep -q '^\[GNUPG:\] VALIDSIG 6603C03926348BD98CE768DEE35BFE2B59ECA014 ' \
+  && sha256sum --check --ignore-missing SHA256SUMS
 install -Dm755 Tyst_*_amd64.AppImage ~/.local/share/AppImage/Tyst.AppImage
 ~/.local/share/AppImage/Tyst.AppImage
 ```
@@ -116,9 +118,9 @@ start: right-click Tyst.app, choose Open, and confirm. It needs macOS 14.4 or ne
 - **Your own voice is missing or choppy in the Me channel while others talk.** Echo cancellation
   can mistake double talk for echo on some speaker setups. Turn it off in Settings › Meetings, or
   use headphones.
-- **"Keychain" errors in the log.** The update token and the paste permission are kept in the
-  Secret Service (KWallet or GNOME Keyring). Without one, paste asks for keyboard access again at
-  each start and the update check works only without a token.
+- **"Keychain" errors in the log.** The paste permission is kept in the Secret Service (KWallet or
+  GNOME Keyring). Without one, paste asks for keyboard access again at each start. The update check
+  needs no token.
 
 Models live outside the repo: `~/Library/Application Support/Tyst/models` on macOS,
 `~/.local/share/tyst/models` on Linux, or `$TYST_MODELS`. After downloading, `models fetch` also writes

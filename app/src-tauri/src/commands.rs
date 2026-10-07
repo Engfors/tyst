@@ -496,11 +496,9 @@ pub fn onboarding_finish(app: AppHandle) -> CmdResult {
     let st = app.state::<AppState>();
     let (cfg, first) = {
         let mut cfg = st.config.lock().expect("config lock");
-        let first = !cfg.onboarded;
-        cfg.onboarded = true;
+        let first = mark_onboarded(&mut cfg, Config::save)?;
         (cfg.clone(), first)
     };
-    cfg.save()?;
     apply_autostart(&app, cfg.launch_at_login);
     windows::close(&app, windows::ONBOARDING);
     AppState::preload(&app);
@@ -510,6 +508,19 @@ pub fn onboarding_finish(app: AppHandle) -> CmdResult {
         crate::start_background(&app);
     }
     Ok(())
+}
+
+/// Marks onboarding done and saves; returns whether this is the first time. A failed save rolls the
+/// flag back, so a retry in the same process still counts as the first and starts the background
+/// tasks (#33).
+fn mark_onboarded(cfg: &mut Config, save: impl FnOnce(&Config) -> Result<(), String>) -> CmdResult<bool> {
+    let first = !cfg.onboarded;
+    cfg.onboarded = true;
+    if let Err(e) = save(cfg) {
+        cfg.onboarded = !first;
+        return Err(e);
+    }
+    Ok(first)
 }
 
 #[tauri::command]
@@ -645,6 +656,16 @@ mod tests {
         assert!(inside(&dir, "a.md").is_err());
         assert!(inside(&dir, dir.join("missing.md").to_str().unwrap()).is_err());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn failed_onboarding_save_is_retried_as_the_first() {
+        let mut cfg = Config::default();
+        assert!(mark_onboarded(&mut cfg, |_| Err("read-only".into())).is_err());
+        assert!(!cfg.onboarded);
+        assert_eq!(mark_onboarded(&mut cfg, |_| Ok(())), Ok(true));
+        assert!(cfg.onboarded);
+        assert_eq!(mark_onboarded(&mut cfg, |_| Ok(())), Ok(false));
     }
 
     #[test]
