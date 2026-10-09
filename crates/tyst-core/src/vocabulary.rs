@@ -16,8 +16,8 @@ use crate::asr::spm::SpmEncoder;
 use crate::text::{Phrase, replace_phrase};
 use crate::{Error, Result};
 
-/// The boost strength (alpha) the app decodes with. Fixed, not a setting; to be confirmed with
-/// `tyst-cli bench --boost` on the owner's `sv-terms` clips.
+/// The boost strength (alpha) the app decodes with. Fixed, not a setting. On the owner's `sv-terms`
+/// clips (`tyst-cli bench --boost 0.25,0.5,1`), 1.0 had the best term recall and WER; `sv` was unchanged.
 pub const BOOST_STRENGTH: f32 = 1.0;
 /// Highest strength `bench --boost` accepts. Klang saw decoy words inserted and a worse WER at 2.0.
 pub const MAX_BOOST_STRENGTH: f32 = 1.0;
