@@ -214,7 +214,7 @@ impl CharsMap {
             return Err(bad());
         }
         let trie = blob.get(4..4 + size).ok_or_else(bad)?;
-        let units = trie.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        let units = trie.as_chunks::<4>().0.iter().map(|&c| u32::from_le_bytes(c)).collect();
         let normalized = String::from_utf8(blob[4 + size..].to_vec()).map_err(|_| bad())?;
         let ends = normalized.match_indices('\0').map(|(i, _)| i).collect();
         Ok(Self { units, normalized, ends })
