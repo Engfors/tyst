@@ -1,16 +1,25 @@
 //! Speech recognition engines (SPEC 4.4).
 
+pub mod boost;
 pub mod onnx;
+pub mod spm;
 pub mod tdt;
 pub mod tokens;
 
 use crate::Result;
+use boost::PhraseBoost;
 
 /// Recognizes one segment of 16 kHz mono audio.
 pub trait AsrEngine: Send {
     /// Engine id with model revision, e.g. `pianissimo-sv-int8@63730c6`.
     fn id(&self) -> &str;
     fn transcribe(&mut self, pcm_16k_mono: &[f32]) -> Result<AsrResult>;
+
+    /// Like `transcribe`, with phrase boosting in the decoder. Engines without it ignore `boost`.
+    fn transcribe_boosted(&mut self, pcm_16k_mono: &[f32], boost: Option<&PhraseBoost>) -> Result<AsrResult> {
+        let _ = boost;
+        self.transcribe(pcm_16k_mono)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

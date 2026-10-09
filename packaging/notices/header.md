@@ -30,6 +30,12 @@ against `models/models.toml`.
   Apache-2.0.
 - **`crates/tyst-core/proto/onnx.proto`** from [ONNX](https://github.com/onnx/onnx) v1.17.0, © ONNX
   Project Contributors, Apache-2.0.
+- **`crates/tyst-core/proto/sentencepiece_model.proto`** from
+  [SentencePiece](https://github.com/google/sentencepiece) v0.2.0, © Google Inc., Apache-2.0.
+  `crates/tyst-core/src/asr/spm.rs` ports its BPE encoder and normalizer.
+- **Phrase boosting** (`crates/tyst-core/src/asr/boost.rs`) is a port of Klang AI's
+  `phrase_boost.py` (`KlangAI/pianissimo-sv-onnx`, CC BY 4.0), itself a port of NVIDIA NeMo's GPU-PB
+  boosting tree (NeMo 2.7, Apache-2.0).
 
 ## Linux AppImage
 

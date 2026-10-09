@@ -9,6 +9,7 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
 
+use super::boost::PhraseBoost;
 use super::tdt::{JointNetwork, TdtConfig, greedy_decode};
 use super::tokens::Vocabulary;
 use super::{AsrEngine, AsrResult, Token};
@@ -129,13 +130,17 @@ impl AsrEngine for OnnxTdtEngine {
     }
 
     fn transcribe(&mut self, pcm: &[f32]) -> Result<AsrResult> {
+        self.transcribe_boosted(pcm, None)
+    }
+
+    fn transcribe_boosted(&mut self, pcm: &[f32], boost: Option<&PhraseBoost>) -> Result<AsrResult> {
         if pcm.is_empty() {
             return Ok(AsrResult { confidence: f32::NEG_INFINITY, ..Default::default() });
         }
         let t0 = std::time::Instant::now();
         let frames = self.encode(pcm)?;
         let t1 = std::time::Instant::now();
-        let decoded = greedy_decode(&mut self.joint, &frames, &self.tdt)?;
+        let decoded = greedy_decode(&mut self.joint, &frames, &self.tdt, boost)?;
         log::debug!(
             "{}: {:.2} s audio, encode {:.0} ms, decode {:.0} ms ({} frames, {} tokens)",
             self.id,
