@@ -40,7 +40,7 @@ pub struct BenchArgs {
     /// Also decode with phrase boosting at these strengths (comma-separated, above 0 and at most 1,
     /// e.g. 0.25,0.5,1), boosting the terms and joining replacements of the terms file. Adds
     /// `boost <s>` and `boost <s>+vocab` rows. Needs `tokenizer.model` (`tyst-cli models fetch`).
-    /// Not with `--lang en`: Parakeet is not boosted.
+    /// With `--lang en` this boosts Parakeet, which the app does not do yet (English eval).
     #[arg(long, value_delimiter = ',')]
     pub boost: Vec<f32>,
     /// Do not spell out digits before scoring (harness `--no-number-norm`).
@@ -210,9 +210,7 @@ pub fn run(args: BenchArgs) -> Result<()> {
     if let Some(bad) = args.boost.iter().find(|a| !(**a > 0.0 && **a <= MAX_BOOST_STRENGTH)) {
         bail!("--boost {bad}: strengths must be above 0 and at most {MAX_BOOST_STRENGTH}");
     }
-    if !args.boost.is_empty() && LanguageMode::parse(&args.engine.lang) == Some(LanguageMode::English) {
-        bail!("--boost with --lang en: forced English (Parakeet) is not boosted");
-    }
+    let english = LanguageMode::parse(&args.engine.lang) == Some(LanguageMode::English);
     let (mut clips, warnings, root) = load_manifest(&args.manifest)?;
     if let Some(cats) = &args.categories {
         let wanted: Vec<&str> = cats.split(',').collect();
@@ -260,7 +258,11 @@ pub fn run(args: BenchArgs) -> Result<()> {
             // Boosted runs decode with the boost only; the text rules are scored separately below.
             let rules = match strength {
                 None => VocabularyRules::default(),
-                Some(_) => VocabularyRules::new(&VocabularyFile { boost: true, ..terms_file.clone() }).boost_only(),
+                Some(_) => {
+                    let rules =
+                        VocabularyRules::new(&VocabularyFile { boost: true, ..terms_file.clone() }).boost_only();
+                    if english { rules.with_english_boost() } else { rules }
+                }
             };
             rt.boost_strength = strength.unwrap_or(BOOST_STRENGTH);
             rt.set_vocabulary(rules);

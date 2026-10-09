@@ -311,9 +311,10 @@ impl<D: SpeechDetector> ChannelPipeline<D> {
         samples: &[f32],
         end_sample: u64,
     ) -> Result<(AsrResult, String, DecodeStats)> {
-        // Phrase boosting stays off for Parakeet (forced English) until it has its own eval.
+        // Phrase boosting stays off for Parakeet (forced English) until it has its own eval, except
+        // when `bench` asks for it.
         let vocabulary = self.vocabulary.clone();
-        let boost = if role == EngineRole::Primary { vocabulary.boost() } else { None };
+        let boost = (role == EngineRole::Primary || vocabulary.boosts_english()).then(|| vocabulary.boost()).flatten();
         let mut engines = self.engines.lock().map_err(|_| Error::Model("engine lock poisoned".into()))?;
         let engine = engines.engine(role)?;
         let t0 = Instant::now();
@@ -481,5 +482,7 @@ mod tests {
         assert!(text(&run(&mut p, &speech)).ends_with("boosted=true"));
         p.router_mut().set_mode(LanguageMode::English);
         assert!(text(&run(&mut p, &speech)).ends_with("boosted=false"));
+        p.vocabulary = Arc::new((*p.vocabulary).clone().with_english_boost());
+        assert!(text(&run(&mut p, &speech)).ends_with("boosted=true"));
     }
 }
