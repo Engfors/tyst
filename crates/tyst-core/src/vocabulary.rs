@@ -105,8 +105,6 @@ pub struct VocabularyRules {
     boost_phrases: Option<Vec<String>>,
     /// The compiled boost, once a tokenizer is known ([`Self::with_boost`]).
     boost: Option<Arc<PhraseBoost>>,
-    /// Also boost Parakeet (forced English); only `bench` sets it, until an English eval passes.
-    boost_english: bool,
 }
 
 impl VocabularyRules {
@@ -122,7 +120,6 @@ impl VocabularyRules {
             terms: file.terms.iter().map(|t| (Phrase::new(t), t.clone())).collect(),
             boost_phrases,
             boost: None,
-            boost_english: false,
         }
     }
 
@@ -163,18 +160,6 @@ impl VocabularyRules {
     /// The compiled boost, if any.
     pub fn boost(&self) -> Option<&PhraseBoost> {
         self.boost.as_deref()
-    }
-
-    /// Boosts Parakeet (forced English) too, for `bench --lang en --boost`. Parakeet v3 shares
-    /// Pianissimo's tokenizer (identical `vocab.txt`), so the same tree applies.
-    pub fn with_english_boost(mut self) -> Self {
-        self.boost_english = true;
-        self
-    }
-
-    /// True when the boost also applies to Parakeet.
-    pub fn boosts_english(&self) -> bool {
-        self.boost_english
     }
 
     pub fn load(path: &Path) -> Result<Self> {

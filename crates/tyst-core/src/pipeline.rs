@@ -311,10 +311,10 @@ impl<D: SpeechDetector> ChannelPipeline<D> {
         samples: &[f32],
         end_sample: u64,
     ) -> Result<(AsrResult, String, DecodeStats)> {
-        // Phrase boosting stays off for Parakeet (forced English) until it has its own eval, except
-        // when `bench` asks for it.
+        // Both engines take the same boost: Parakeet v3 ships Pianissimo's `vocab.txt`, so the
+        // tokenizer's IDs fit it too.
         let vocabulary = self.vocabulary.clone();
-        let boost = (role == EngineRole::Primary || vocabulary.boosts_english()).then(|| vocabulary.boost()).flatten();
+        let boost = vocabulary.boost();
         let mut engines = self.engines.lock().map_err(|_| Error::Model("engine lock poisoned".into()))?;
         let engine = engines.engine(role)?;
         let t0 = Instant::now();
@@ -469,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn boosts_the_primary_engine_only() {
+    fn boosts_both_engines() {
         let calls = Arc::new(Mutex::new(vec![]));
         let mut p = pipeline(false, calls);
         let boost = PhraseBoost { tree: BoostTree::new(&[vec![1, 2]], 1.0, 2.0), alpha: 1.0 };
@@ -481,8 +481,6 @@ mod tests {
         };
         assert!(text(&run(&mut p, &speech)).ends_with("boosted=true"));
         p.router_mut().set_mode(LanguageMode::English);
-        assert!(text(&run(&mut p, &speech)).ends_with("boosted=false"));
-        p.vocabulary = Arc::new((*p.vocabulary).clone().with_english_boost());
         assert!(text(&run(&mut p, &speech)).ends_with("boosted=true"));
     }
 }

@@ -107,7 +107,7 @@
     </label>
     <p class="muted">
       Makes the model more likely to hear your terms, and the corrected side of replacements, as you wrote
-      them. Swedish and Auto only; English is not boosted yet.
+      them.
     </p>
     {#if vocab.boost && !boostReady}
       <p class="note">
