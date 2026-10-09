@@ -94,3 +94,31 @@ fn banded_encoder_matches_the_original() {
         assert_eq!(ra.tokens, rb.tokens, "{secs} s");
     }
 }
+
+#[test]
+#[ignore = "needs the real models in $TYST_MODELS"]
+fn boosted_decoding_runs_on_the_real_model() {
+    use tyst_core::asr::boost::PhraseBoost;
+    use tyst_core::asr::spm::SpmEncoder;
+    use tyst_core::asr::tokens::Vocabulary;
+    let Some(dir) = installed(PIANISSIMO) else {
+        eprintln!("skipped: models not installed");
+        return;
+    };
+    let tokenizer = dir.join(models::TOKENIZER);
+    if !tokenizer.is_file() {
+        eprintln!("skipped: {} not fetched", models::TOKENIZER);
+        return;
+    }
+    let encoder = SpmEncoder::load(&tokenizer).unwrap();
+    let vocab = Vocabulary::load(&dir.join("vocab.txt")).unwrap();
+    // Same IDs as the decoder: every piece but blank, which is last.
+    assert_eq!(encoder.len() + 1, vocab.len());
+    assert_eq!(vocab.blank() as usize, encoder.len());
+    let ids = encoder.encode("Terraform");
+    assert_eq!(vocab.detokenize(&ids), "Terraform");
+    let boost = PhraseBoost::new(&["Terraform", "HashiCorp", "Klang AI"], &encoder, 1.0);
+    let mut e = engine().unwrap();
+    let r = e.transcribe_boosted(&vec![0.0; 16_000], Some(&boost)).unwrap();
+    assert!(r.text.is_empty(), "{:?}", r.text);
+}

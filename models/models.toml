@@ -17,6 +17,10 @@ files = [
   { name = "decoder_joint-model.int8.onnx", size = 30025652, sha256 = "0f9213242acd8874f2717c5e3cdb888d4e7673ddf3abb9ee3a2fd2eaf0acdd03" },
   { name = "nemo128.onnx", size = 138824, sha256 = "5b4a84c52eeaa615dc46d781cc7e4598f9b432184831d57493c48adcd01371a9" },
   { name = "vocab.txt", size = 93939, sha256 = "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" },
+  # SentencePiece model for phrase boosting (custom vocabulary in the decoder). Optional, so installs
+  # from before it was added still count as installed; boosting is off until it is fetched. The
+  # same file as in NVIDIA's Parakeet v3 `.nemo`.
+  { name = "tokenizer.model", size = 360916, sha256 = "eacec2b0a77f336d4a2ca4a25a7047575d3c2b74de47e997f4c205126ed3135e", optional = true },
 ]
 # Computed by `models fetch` from the encoder above, without a download: the same attention without
 # the 256-frame block padding, so short segments no longer cost as much as 20 s ones. Same outputs.

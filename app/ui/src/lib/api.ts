@@ -184,9 +184,20 @@ export type ModelsEvent =
   | { type: "done" }
   | { type: "failed"; message: string };
 
+export interface Replacement {
+  from: string;
+  to: string;
+  /** Boost `to` in the decoder; unset means only when the rule just joins words. */
+  boost?: boolean;
+}
+
 export interface Vocabulary {
+  /** Phrase boosting in the decoder. */
+  boost: boolean;
+  /** Boost weight, up to 1. */
+  boost_strength: number;
   terms: string[];
-  replacements: { from: string; to: string }[];
+  replacements: Replacement[];
 }
 
 export const api = {
@@ -216,6 +227,7 @@ export const api = {
   vocabularySet: (vocabulary: Vocabulary) => invoke<void>("vocabulary_set", { vocabulary }),
   vocabularyImport: () => invoke<Vocabulary | null>("vocabulary_import"),
   vocabularyExport: () => invoke<string | null>("vocabulary_export"),
+  vocabularyBoostReady: () => invoke<boolean>("vocabulary_boost_ready"),
   audioTest: (channel: Channel, seconds = 4) =>
     invoke<{ peak: number; text: string }>("audio_test", { channel, seconds }),
   onboardingFinish: () => invoke<void>("onboarding_finish"),

@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
-use tyst_core::models::{FileStatus, Manifest, PARAKEET};
+use tyst_core::models::{FileStatus, Manifest, PARAKEET, PIANISSIMO, TOKENIZER};
 use tyst_core::router::LanguageMode;
 use tyst_core::transcript::Channel;
 use tyst_core::vocabulary::{Replacement, VocabularyFile, VocabularyRules};
@@ -337,6 +337,8 @@ pub fn models_fetch(app: AppHandle, ids: Vec<String>) -> CmdResult {
         match result {
             Ok(()) => {
                 emit(ModelsEvent::Done);
+                // A loaded runtime picks up a newly fetched tokenizer for phrase boosting.
+                app.state::<AppState>().set_vocabulary(VocabularyRules::new(&config::load_vocabulary()));
                 AppState::preload(&app);
             }
             Err(e) => {
@@ -404,22 +406,44 @@ pub fn models_installed(app: AppHandle) -> bool {
 /// would silently drop the rules.
 #[derive(Serialize, Deserialize)]
 pub struct VocabularyDto {
+    #[serde(default = "yes")]
+    boost: bool,
+    #[serde(default = "full_strength")]
+    boost_strength: f32,
     #[serde(default)]
     terms: Vec<String>,
     #[serde(default)]
     replacements: Vec<Replacement>,
 }
 
+fn yes() -> bool {
+    true
+}
+
+fn full_strength() -> f32 {
+    tyst_core::vocabulary::MAX_BOOST_STRENGTH
+}
+
 impl From<VocabularyFile> for VocabularyDto {
     fn from(v: VocabularyFile) -> Self {
-        Self { terms: v.terms, replacements: v.replacements }
+        Self { boost: v.boost, boost_strength: v.boost_strength, terms: v.terms, replacements: v.replacements }
     }
 }
 
 impl From<VocabularyDto> for VocabularyFile {
     fn from(v: VocabularyDto) -> Self {
-        Self { terms: v.terms, replacements: v.replacements }
+        Self { boost: v.boost, boost_strength: v.boost_strength, terms: v.terms, replacements: v.replacements }
     }
+}
+
+/// True when Pianissimo's `tokenizer.model` is installed, so the vocabulary can boost the decoder.
+#[tauri::command]
+pub fn vocabulary_boost_ready(app: AppHandle) -> bool {
+    let dir = app.state::<AppState>().config().models_dir();
+    let manifest = Manifest::builtin();
+    manifest
+        .get(PIANISSIMO)
+        .is_ok_and(|spec| tyst_core::models::optional_file(spec, &dir, TOKENIZER).is_ok_and(|p| p.is_some()))
 }
 
 #[tauri::command]
@@ -671,10 +695,15 @@ mod tests {
     #[test]
     fn vocabulary_keeps_replacements_over_ipc() {
         // The shape `Vocabulary.svelte` sends and expects back.
-        let json = r#"{"terms":["HashiCorp"],"replacements":[{"from":"hashi corp","to":"HashiCorp"}]}"#;
+        let json = r#"{"boost":true,"boost_strength":0.5,"terms":["HashiCorp"],"replacements":[{"from":"hashi corp","to":"HashiCorp"},{"from":"kuber netes","to":"Kubernetes","boost":true}]}"#;
         let file: VocabularyFile = serde_json::from_str::<VocabularyDto>(json).unwrap().into();
-        assert_eq!(file.replacements, vec![Replacement { from: "hashi corp".into(), to: "HashiCorp".into() }]);
+        assert_eq!(file.replacements[0], Replacement::new("hashi corp", "HashiCorp"));
+        assert_eq!(file.replacements[1].boost, Some(true));
+        assert_eq!(file.boost_strength, 0.5);
         let back = serde_json::to_string(&VocabularyDto::from(file)).unwrap();
         assert_eq!(back, json);
+        // An older UI without the boost fields keeps boosting on at full strength.
+        let old: VocabularyFile = serde_json::from_str::<VocabularyDto>(r#"{"terms":[]}"#).unwrap().into();
+        assert_eq!(old, VocabularyFile::default());
     }
 }

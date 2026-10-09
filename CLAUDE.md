@@ -60,7 +60,9 @@ notes from the `CHANGELOG.md` section for the version, which must exist).
 Actions are pinned to commit SHAs; keep them pinned when updating. `cargo audit` runs in CI (`.cargo/audit.toml`).
 
 Model tests in `crates/tyst-core/tests/models.rs` are `#[ignore]`d; run them with
-`TYST_MODELS=<dir> cargo test -p tyst-core --test models -- --ignored`. Eval harness tests:
+`TYST_MODELS=<dir> cargo test -p tyst-core --test models -- --ignored`. The phrase-boost tests in `tests/boost.rs`
+compare against fixtures from Python `sentencepiece` and Klang's `phrase_boost.py` (`tests/fixtures/make_golden.py`);
+the tokenizer one needs `TYST_TOKENIZER=<tokenizer.model>` and `--ignored`. Eval harness tests:
 `(cd eval && python3 -m unittest discover -s tests)`.
 On Linux, building the `mic` feature needs ALSA headers and `pipewire` needs PipeWire headers plus clang;
 the app also needs webkit2gtk-4.1 and libayatana-appindicator (see `.github/workflows/ci.yml`).

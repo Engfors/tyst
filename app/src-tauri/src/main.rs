@@ -93,6 +93,7 @@ fn main() {
             commands::vocabulary_set,
             commands::vocabulary_import,
             commands::vocabulary_export,
+            commands::vocabulary_boost_ready,
             commands::audio_test,
             commands::onboarding_finish,
             commands::show_settings,

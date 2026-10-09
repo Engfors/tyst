@@ -24,6 +24,7 @@
     "allow-updates-check",
     "allow-updates-open-release",
     "allow-updates-state",
+    "allow-vocabulary-boost-ready",
     "allow-vocabulary-export",
     "allow-vocabulary-get",
     "allow-vocabulary-import",

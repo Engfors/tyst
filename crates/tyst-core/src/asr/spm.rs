@@ -27,6 +27,7 @@ pub struct SpmEncoder {
     /// Never normalized or merged (in these models: digits and `<|...|>` tags).
     user_defined: Vec<String>,
     unk: u32,
+    size: usize,
     charsmap: Option<CharsMap>,
     add_dummy_prefix: bool,
     remove_extra_whitespaces: bool,
@@ -74,11 +75,22 @@ impl SpmEncoder {
             pieces,
             user_defined,
             unk: unk as u32,
+            size: model.pieces.len(),
             charsmap,
             add_dummy_prefix: norm.add_dummy_prefix(),
             remove_extra_whitespaces: norm.remove_extra_whitespaces(),
             escape_whitespaces: norm.escape_whitespaces(),
         })
+    }
+
+    /// Pieces in the model, `<unk>` and control pieces included: the decoder's vocabulary
+    /// without blank.
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
     }
 
     /// Token IDs for `text`, exactly as `SentencePieceProcessor.encode` returns them.
