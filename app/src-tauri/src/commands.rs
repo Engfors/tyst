@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
-use tyst_core::models::{FileStatus, Manifest, PARAKEET};
+use tyst_core::models::{FileStatus, Manifest, PARAKEET, PIANISSIMO, TOKENIZER};
 use tyst_core::router::LanguageMode;
 use tyst_core::transcript::Channel;
 use tyst_core::vocabulary::{Replacement, VocabularyFile, VocabularyRules};
@@ -337,6 +337,8 @@ pub fn models_fetch(app: AppHandle, ids: Vec<String>) -> CmdResult {
         match result {
             Ok(()) => {
                 emit(ModelsEvent::Done);
+                // A loaded runtime picks up a newly fetched tokenizer for phrase boosting.
+                app.state::<AppState>().set_vocabulary(VocabularyRules::new(&config::load_vocabulary()));
                 AppState::preload(&app);
             }
             Err(e) => {
@@ -404,22 +406,58 @@ pub fn models_installed(app: AppHandle) -> bool {
 /// would silently drop the rules.
 #[derive(Serialize, Deserialize)]
 pub struct VocabularyDto {
+    #[serde(default = "yes")]
+    boost: bool,
     #[serde(default)]
     terms: Vec<String>,
     #[serde(default)]
-    replacements: Vec<Replacement>,
+    replacements: Vec<ReplacementDto>,
+}
+
+/// A rule as the UI sees it, with the automatic boost choice computed here so the UI does not
+/// need its own copy of [`Replacement::joins_words`].
+#[derive(Serialize, Deserialize)]
+pub struct ReplacementDto {
+    from: String,
+    to: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    boost: Option<bool>,
+    /// Output only: what an unset `boost` means for this rule.
+    #[serde(default, skip_deserializing)]
+    joins_words: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl From<VocabularyFile> for VocabularyDto {
     fn from(v: VocabularyFile) -> Self {
-        Self { terms: v.terms, replacements: v.replacements }
+        let replacements = v
+            .replacements
+            .into_iter()
+            .map(|r| ReplacementDto { joins_words: r.joins_words(), from: r.from, to: r.to, boost: r.boost })
+            .collect();
+        Self { boost: v.boost, terms: v.terms, replacements }
     }
 }
 
 impl From<VocabularyDto> for VocabularyFile {
     fn from(v: VocabularyDto) -> Self {
-        Self { terms: v.terms, replacements: v.replacements }
+        let replacements =
+            v.replacements.into_iter().map(|r| Replacement { from: r.from, to: r.to, boost: r.boost }).collect();
+        Self { boost: v.boost, terms: v.terms, replacements }
     }
+}
+
+/// True when Pianissimo's `tokenizer.model` is installed, so the vocabulary can boost the decoder.
+#[tauri::command]
+pub fn vocabulary_boost_ready(app: AppHandle) -> bool {
+    let dir = app.state::<AppState>().config().models_dir();
+    let manifest = Manifest::builtin();
+    manifest
+        .get(PIANISSIMO)
+        .is_ok_and(|spec| tyst_core::models::optional_file(spec, &dir, TOKENIZER).is_ok_and(|p| p.is_some()))
 }
 
 #[tauri::command]
@@ -427,12 +465,16 @@ pub fn vocabulary_get() -> VocabularyDto {
     config::load_vocabulary().into()
 }
 
+/// Saves the vocabulary and returns it as stored, with the automatic boost choices filled in.
 #[tauri::command]
-pub fn vocabulary_set(app: AppHandle, vocabulary: VocabularyDto) -> CmdResult {
-    save_vocabulary(&app, &vocabulary.into())
+pub fn vocabulary_set(app: AppHandle, vocabulary: VocabularyDto) -> CmdResult<VocabularyDto> {
+    let file: VocabularyFile = vocabulary.into();
+    save_vocabulary(&app, &file)?;
+    Ok(file.into())
 }
 
 fn save_vocabulary(app: &AppHandle, vocabulary: &VocabularyFile) -> CmdResult {
+    vocabulary.check().map_err(|e| e.to_string())?;
     config::save_vocabulary(vocabulary)?;
     app.state::<AppState>().set_vocabulary(VocabularyRules::new(vocabulary));
     Ok(())
@@ -671,10 +713,21 @@ mod tests {
     #[test]
     fn vocabulary_keeps_replacements_over_ipc() {
         // The shape `Vocabulary.svelte` sends and expects back.
-        let json = r#"{"terms":["HashiCorp"],"replacements":[{"from":"hashi corp","to":"HashiCorp"}]}"#;
+        let json = r#"{"boost":true,"terms":["HashiCorp"],"replacements":[{"from":"hashi corp","to":"HashiCorp","joins_words":true},{"from":"kubernetis","to":"Kubernetes","boost":true,"joins_words":false}]}"#;
         let file: VocabularyFile = serde_json::from_str::<VocabularyDto>(json).unwrap().into();
-        assert_eq!(file.replacements, vec![Replacement { from: "hashi corp".into(), to: "HashiCorp".into() }]);
+        assert_eq!(file.replacements[0], Replacement::new("hashi corp", "HashiCorp"));
+        assert_eq!(file.replacements[1].boost, Some(true));
         let back = serde_json::to_string(&VocabularyDto::from(file)).unwrap();
         assert_eq!(back, json);
+        // `joins_words` is computed, never taken from the UI.
+        let lying = r#"{"replacements":[{"from":"a","to":"b","joins_words":true}]}"#;
+        let back = serde_json::to_string(&VocabularyDto::from(VocabularyFile::from(
+            serde_json::from_str::<VocabularyDto>(lying).unwrap(),
+        )))
+        .unwrap();
+        assert!(back.contains(r#""joins_words":false"#), "{back}");
+        // An older UI without the boost field keeps boosting on.
+        let old: VocabularyFile = serde_json::from_str::<VocabularyDto>(r#"{"terms":[]}"#).unwrap().into();
+        assert_eq!(old, VocabularyFile::default());
     }
 }

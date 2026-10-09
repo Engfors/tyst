@@ -5,9 +5,9 @@
 //! travels to the meeting window and the Markdown file; logs carry states, timings and errors.
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -285,7 +285,7 @@ impl AppState {
     /// New vocabulary rules, used from the next meeting on.
     pub fn set_vocabulary(&self, rules: VocabularyRules) {
         if let Some(rt) = self.runtime.lock().expect("runtime lock").as_mut() {
-            rt.vocabulary = Arc::new(rules);
+            rt.set_vocabulary(rules);
         }
     }
 

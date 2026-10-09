@@ -23,6 +23,12 @@ too, so there is one native dependency. sherpa-onnx is not used.
   Phase 1 tests it against the harness outputs on the same clips.
 - No hotwords/contextual biasing in v1. The vocabulary replacement rules (SPEC 9.3) still apply;
   on the owner set they lift exact term spelling to the 76–78 % term recall.
+  *Amended 2026-10-09:* the vocabulary now also biases greedy decoding with Klang's phrase boosting
+  (a port of NeMo's GPU-PB boosting tree, `asr::boost`) and a pure-Rust SentencePiece encoder for
+  Pianissimo's `tokenizer.model` (`asr::spm`). It stays greedy and needs no other export or
+  runtime. Parakeet (forced English) is boosted too: it ships the same `vocab.txt`, so the same
+  tokenizer applies. Owner bench at strength 1.0: `sv-terms` term recall 75.9 → 83.3 % (WER 6.0 →
+  5.7 %, `sv` unchanged at 4.8 %); `en` term recall 83.3 → 94.4 % (WER 4.5 → 4.4 %).
 - Parakeet v3 (only used for forced English, ADR 0002) needs the onnx-asr export of Parakeet,
   not sherpa-onnx's, so both models share one loader.
 

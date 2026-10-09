@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use tyst_core::asr::AsrEngine;
 use tyst_core::asr::onnx::{OnnxModelFiles, OnnxTdtEngine, SessionOptions};
-use tyst_core::models::{self, Manifest, PARAKEET, PIANISSIMO, SILERO_VAD};
+use tyst_core::asr::spm::SpmEncoder;
+use tyst_core::models::{self, Manifest, PARAKEET, PIANISSIMO, SILERO_VAD, TOKENIZER};
 use tyst_core::pipeline::{ChannelPipeline, EngineSet, PipelineConfig, SharedEngines};
 use tyst_core::router::{EngineRole, FixedRouter, LanguageMode};
 use tyst_core::transcript::{Channel, Lang};
@@ -41,9 +42,16 @@ impl EngineOptions {
 pub struct Runtime {
     pub engines: SharedEngines,
     pub vad_path: PathBuf,
+    /// Set it with [`set_vocabulary`](Self::set_vocabulary), which compiles the phrase boost.
     pub vocabulary: Arc<VocabularyRules>,
     pub mode: LanguageMode,
     pub load_time: Duration,
+    /// Strength [`set_vocabulary`](Self::set_vocabulary) compiles the boost at; the app keeps the
+    /// fixed default, `bench --boost` sweeps it.
+    pub boost_strength: f32,
+    models_dir: PathBuf,
+    /// Pianissimo's tokenizer, for phrase boosting; `None` until `tokenizer.model` is fetched.
+    encoder: Option<Arc<SpmEncoder>>,
 }
 
 impl Runtime {
@@ -79,13 +87,31 @@ impl Runtime {
         if !vad_path.is_file() {
             return Err(Error::Other(format!("VAD model missing: {}", vad_path.display())));
         }
+        let encoder = load_tokenizer(&manifest, &dir);
         Ok(Self {
             engines: set.shared(),
             vad_path,
-            vocabulary: Arc::new(opts.vocabulary.clone()),
+            vocabulary: Arc::new(opts.vocabulary.clone().with_boost(encoder.as_deref())),
             mode: opts.mode,
             load_time: t0.elapsed(),
+            boost_strength: tyst_core::vocabulary::BOOST_STRENGTH,
+            models_dir: dir,
+            encoder,
         })
+    }
+
+    /// New vocabulary rules for the next pipelines, with the phrase boost compiled. Looks for
+    /// the tokenizer again if it was missing, so a fetch after loading takes effect.
+    pub fn set_vocabulary(&mut self, rules: VocabularyRules) {
+        if self.encoder.is_none() {
+            self.encoder = load_tokenizer(&Manifest::builtin(), &self.models_dir);
+        }
+        self.vocabulary = Arc::new(rules.with_boost_at(self.encoder.as_deref(), self.boost_strength));
+    }
+
+    /// True when phrase boosting is compiled into the current vocabulary.
+    pub fn boosting(&self) -> bool {
+        self.vocabulary.boost().is_some()
     }
 
     /// A pipeline for one channel, with its own VAD and router.
@@ -118,5 +144,27 @@ impl Runtime {
     /// Engine ids (with revisions) loaded so far.
     pub fn model_ids(&self) -> Vec<String> {
         self.engines.lock().map(|e| e.loaded_ids()).unwrap_or_default()
+    }
+}
+
+/// Pianissimo's `tokenizer.model` (also Parakeet v3's), when it is installed and matches its pin.
+fn load_tokenizer(manifest: &Manifest, models_dir: &std::path::Path) -> Option<Arc<SpmEncoder>> {
+    let spec = manifest.get(PIANISSIMO).ok()?;
+    match models::optional_file(spec, models_dir, TOKENIZER) {
+        Ok(Some(path)) => match SpmEncoder::load(&path) {
+            Ok(encoder) => Some(Arc::new(encoder)),
+            Err(e) => {
+                log::warn!("phrase boosting off: {e}");
+                None
+            }
+        },
+        Ok(None) => {
+            log::info!("phrase boosting off: {TOKENIZER} not installed");
+            None
+        }
+        Err(e) => {
+            log::warn!("phrase boosting off: {e}");
+            None
+        }
     }
 }

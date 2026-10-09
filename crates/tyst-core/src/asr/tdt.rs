@@ -1,6 +1,7 @@
 //! Greedy TDT (token-and-duration transducer) decoding, ported from onnx-asr's NeMo transducer
 //! loop, which produced the Phase 0 numbers (ADR 0001).
 
+use super::boost::PhraseBoost;
 use crate::Result;
 
 /// The prediction network and joiner, run one encoder frame at a time.
@@ -45,18 +46,32 @@ impl Decoded {
 
 /// Decodes `frames` (one feature vector per encoder frame). Duration index `k` means "advance `k`
 /// frames"; the durations of NeMo's TDT models are `[0, 1, 2, 3, 4]`, so index and step coincide.
-pub fn greedy_decode<J: JointNetwork>(joint: &mut J, frames: &[Vec<f32>], cfg: &TdtConfig) -> Result<Decoded> {
+///
+/// With `boost`, a frame whose unboosted argmax is a token (not blank) re-picks among the non-blank
+/// tokens with the phrase bonus added (Klang's `_boosted_decoding`). Boosting therefore never adds
+/// or removes an emission, the duration stays the unboosted one, and the logprob is the chosen
+/// token's under the unboosted softmax.
+pub fn greedy_decode<J: JointNetwork>(
+    joint: &mut J,
+    frames: &[Vec<f32>],
+    cfg: &TdtConfig,
+    boost: Option<&PhraseBoost>,
+) -> Result<Decoded> {
     let mut out = Decoded::default();
     let mut state = joint.initial_state();
+    let mut boost_state = 0u32;
     let mut t = 0usize;
     let mut emitted = 0usize;
     while t < frames.len() {
         let prev = out.tokens.last().copied().unwrap_or(cfg.blank);
         let (logits, next_state) = joint.step(&frames[t], prev, &state)?;
         let (token_logits, duration_logits) = logits.split_at(cfg.vocab_size);
-        let token = argmax(token_logits) as u32;
+        let mut token = argmax(token_logits) as u32;
         let step = if duration_logits.is_empty() { 0 } else { argmax(duration_logits) };
         if token != cfg.blank {
+            if let Some(boost) = boost {
+                token = boost.choose(token_logits, cfg.blank, &mut boost_state);
+            }
             state = next_state;
             out.tokens.push(token);
             out.frames.push(t);
@@ -127,7 +142,7 @@ mod tests {
     #[test]
     fn follows_durations_and_blanks() {
         let mut j = Script { steps: vec![(3, 2), (BLANK, 0), (4, 0), (5, 1)], calls: vec![], vocab: 10 };
-        let d = greedy_decode(&mut j, &frames(4), &CFG).unwrap();
+        let d = greedy_decode(&mut j, &frames(4), &CFG, None).unwrap();
         assert_eq!(d.tokens, vec![3, 4, 5]);
         assert_eq!(d.frames, vec![0, 3, 3]);
         // frame 0 -> skip 2 -> blank on frame 2 advances 1 -> frame 3 emits twice, then moves past the end
@@ -138,7 +153,7 @@ mod tests {
     #[test]
     fn state_and_prev_token_only_advance_on_emission() {
         let mut j = Script { steps: vec![(BLANK, 1), (7, 1), (BLANK, 1)], calls: vec![], vocab: 10 };
-        greedy_decode(&mut j, &frames(3), &CFG).unwrap();
+        greedy_decode(&mut j, &frames(3), &CFG, None).unwrap();
         // The joint returns state + 1; it is kept only after the emission on frame 1.
         assert_eq!(j.calls, vec![(0, BLANK, 0), (1, BLANK, 0), (2, 7, 1)]);
     }
@@ -146,7 +161,7 @@ mod tests {
     #[test]
     fn caps_tokens_per_frame() {
         let mut j = Script { steps: vec![(1, 0), (2, 0), (3, 0), (BLANK, 0)], calls: vec![], vocab: 10 };
-        let d = greedy_decode(&mut j, &frames(2), &CFG).unwrap();
+        let d = greedy_decode(&mut j, &frames(2), &CFG, None).unwrap();
         assert_eq!(d.tokens, vec![1, 2, 3]);
         assert_eq!(d.frames, vec![0, 0, 1]);
     }
@@ -154,9 +169,94 @@ mod tests {
     #[test]
     fn logprobs_are_normalized() {
         let mut j = Script { steps: vec![(2, 1)], calls: vec![], vocab: 10 };
-        let d = greedy_decode(&mut j, &frames(1), &CFG).unwrap();
+        let d = greedy_decode(&mut j, &frames(1), &CFG, None).unwrap();
         let p = d.logprobs[0].exp();
         assert!((p - 5f32.exp() / (5f32.exp() + 9.0)).abs() < 1e-5);
         assert!(d.confidence() < 0.0);
+    }
+
+    /// Joint returning fixed token logits per call, with the duration argmax at `dur`.
+    struct Fixed {
+        steps: Vec<(Vec<f32>, usize)>,
+    }
+
+    impl JointNetwork for Fixed {
+        type State = ();
+        fn initial_state(&self) {}
+        fn step(&mut self, _frame: &[f32], _prev: u32, _state: &()) -> Result<(Vec<f32>, ())> {
+            let (mut logits, dur) = self.steps.remove(0);
+            let mut durations = vec![0.0; 5];
+            durations[dur] = 1.0;
+            logits.extend(durations);
+            Ok((logits, ()))
+        }
+    }
+
+    #[test]
+    fn boost_flips_close_tokens_but_not_blanks_or_durations() {
+        use super::super::boost::{BoostTree, CONTEXT_SCORE, DEPTH_SCALING, PhraseBoost};
+        // Phrase "2 3". Frame 0: token 1 leads 2 by 0.5. Frame 1: blank leads. Frame 2: 3 is close.
+        let step = |lead: usize, close: usize, gap: f32, dur: usize| {
+            let mut l = vec![0.0; 10];
+            l[lead] = 4.0;
+            l[close] = 4.0 - gap;
+            (l, dur)
+        };
+        let script = || Fixed { steps: vec![step(1, 2, 0.5, 1), step(BLANK as usize, 2, 0.1, 1), step(4, 3, 0.5, 1)] };
+        let plain = greedy_decode(&mut script(), &frames(3), &CFG, None).unwrap();
+        assert_eq!(plain.tokens, vec![1, 4]);
+        let boost = PhraseBoost { tree: BoostTree::new(&[vec![2, 3]], CONTEXT_SCORE, DEPTH_SCALING), alpha: 1.0 };
+        let boosted = greedy_decode(&mut script(), &frames(3), &CFG, Some(&boost)).unwrap();
+        assert_eq!(boosted.tokens, vec![2, 3]);
+        assert_eq!(boosted.frames, plain.frames);
+        // The logprob is the chosen token's under the unboosted softmax, so lower than the leader's.
+        assert!(boosted.logprobs[0] < plain.logprobs[0]);
+    }
+
+    /// Joint with seeded random logits; blank leads on about half the frames.
+    struct Random {
+        seed: u64,
+    }
+
+    impl Random {
+        fn next(&mut self) -> f32 {
+            self.seed ^= self.seed << 13;
+            self.seed ^= self.seed >> 7;
+            self.seed ^= self.seed << 17;
+            (self.seed >> 40) as f32 / (1u64 << 24) as f32
+        }
+    }
+
+    impl JointNetwork for Random {
+        type State = ();
+        fn initial_state(&self) {}
+        fn step(&mut self, _frame: &[f32], _prev: u32, _state: &()) -> Result<(Vec<f32>, ())> {
+            let mut logits: Vec<f32> = (0..15).map(|_| self.next() * 8.0 - 4.0).collect();
+            if self.next() < 0.5 {
+                logits[BLANK as usize] += 6.0;
+            }
+            Ok((logits, ()))
+        }
+    }
+
+    #[test]
+    fn boost_without_a_reachable_phrase_changes_nothing() {
+        use super::super::boost::{BoostTree, CONTEXT_SCORE, DEPTH_SCALING, PhraseBoost};
+        let tree = |phrases: &[Vec<u32>]| PhraseBoost {
+            tree: BoostTree::new(phrases, CONTEXT_SCORE, DEPTH_SCALING),
+            alpha: 1.0,
+        };
+        // Empty, a token the model never emits (beyond the vocabulary), and blank only.
+        let boosts = [tree(&[]), tree(&[vec![99, 3]]), tree(&[vec![BLANK]])];
+        let bits = |d: &Decoded| d.logprobs.iter().map(|l| l.to_bits()).collect::<Vec<_>>();
+        for seed in 1..=200u64 {
+            let plain = greedy_decode(&mut Random { seed }, &frames(30), &CFG, None).unwrap();
+            for b in &boosts {
+                let boosted = greedy_decode(&mut Random { seed }, &frames(30), &CFG, Some(b)).unwrap();
+                assert_eq!(boosted.tokens, plain.tokens, "seed {seed}");
+                assert_eq!(boosted.frames, plain.frames, "seed {seed}");
+                assert_eq!(bits(&boosted), bits(&plain), "seed {seed}");
+            }
+        }
     }
 }

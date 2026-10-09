@@ -49,7 +49,7 @@ pub fn missing_bytes(ids: &[&str], models_dir: &Path) -> Result<u64> {
     let mut total = 0;
     for id in ids {
         let spec = manifest.get(id)?;
-        for (file, (_, st)) in spec.files.iter().zip(models::verify(spec, models_dir, Check::Size)?) {
+        for (file, (_, st)) in spec.required_files().zip(models::verify(spec, models_dir, Check::Size)?) {
             if st != FileStatus::Ok {
                 total += file.size;
             }
@@ -93,10 +93,10 @@ fn fetch_one(
     log::info!("fetching {id} from {}@{} ({} bytes)", spec.hf_repo, &spec.revision[..7], spec.total_size());
     progress(Progress::Model { id: id.to_string(), bytes: spec.total_size() });
     // Stamped check: a file that is the right size but was never hashed in this install (or
-    // changed since) is hashed now, and downloaded again if it does not match.
-    let status = models::verify(spec, models_dir, Check::Stamp)?;
-    for (file, (_, st)) in spec.files.iter().zip(status) {
-        if st == FileStatus::Ok {
+    // changed since) is hashed now, and downloaded again if it does not match. Optional files are
+    // fetched too.
+    for file in &spec.files {
+        if models::file_status(&dir.join(&file.name), file.size, &file.sha256, Check::Stamp)? == FileStatus::Ok {
             progress(Progress::Present { file: file.name.clone() });
             continue;
         }

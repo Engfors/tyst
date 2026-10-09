@@ -5,6 +5,14 @@ for a version is the text of its GitHub release and of the update notice in Sett
 
 ## Unreleased
 
+Features
+- Custom vocabulary now helps recognition, not only spelling: terms, and replacements that join
+  words (`terra form → Terraform`), make the model more likely to hear them as written, in
+  Swedish and in forced English. It is on by default, with an on/off switch and a per-rule
+  "listen" box in Settings › Vocabulary. Existing installs download one small file (360 KB) from
+  there first.
+- `tyst-cli bench --boost 0.25,0.5,1` scores boosted decoding next to the plain rows.
+
 Fixes
 - Finishing onboarding again after the settings could not be saved now starts meeting detection,
   the update check and idle model unload.

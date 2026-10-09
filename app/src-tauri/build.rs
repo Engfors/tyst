@@ -43,6 +43,7 @@ const COMMANDS: &[&str] = &[
     "updates_check",
     "updates_open_release",
     "updates_state",
+    "vocabulary_boost_ready",
     "vocabulary_export",
     "vocabulary_get",
     "vocabulary_import",

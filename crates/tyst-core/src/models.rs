@@ -16,6 +16,8 @@ pub const BUILTIN_MANIFEST: &str = include_str!("../../../models/models.toml");
 pub const PIANISSIMO: &str = "pianissimo-sv-int8";
 pub const PARAKEET: &str = "parakeet-v3-int8";
 pub const SILERO_VAD: &str = "silero-vad";
+/// SentencePiece model in Pianissimo's directory, for phrase boosting (optional).
+pub const TOKENIZER: &str = "tokenizer.model";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Manifest {
@@ -47,6 +49,10 @@ pub struct ModelFile {
     pub path: Option<String>,
     pub size: u64,
     pub sha256: String,
+    /// Fetched with the model, but the model counts as installed without it (a file added after
+    /// a release, such as the tokenizer for phrase boosting). [`verify`] skips it.
+    #[serde(default)]
+    pub optional: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -85,6 +91,11 @@ impl ModelSpec {
 
     pub fn total_size(&self) -> u64 {
         self.files.iter().map(|f| f.size).sum()
+    }
+
+    /// The files a model needs to count as installed.
+    pub fn required_files(&self) -> impl Iterator<Item = &ModelFile> {
+        self.files.iter().filter(|f| !f.optional)
     }
 }
 
@@ -138,16 +149,23 @@ pub enum Check {
     Full,
 }
 
-/// Checks every file of a model.
+/// Checks every required and derived file of a model (optional files: [`optional_file`]).
 pub fn verify(spec: &ModelSpec, models_dir: &Path, check: Check) -> Result<Vec<(String, FileStatus)>> {
     let dir = models_dir.join(&spec.dir);
-    let pinned = spec.files.iter().map(|f| (&f.name, f.size, &f.sha256));
+    let pinned = spec.required_files().map(|f| (&f.name, f.size, &f.sha256));
     let derived = spec.derived.iter().map(|d| (&d.name, d.size, &d.sha256));
     let mut out = Vec::new();
     for (name, size, sha256) in pinned.chain(derived) {
         out.push((name.clone(), file_status(&dir.join(name), size, sha256, check)?));
     }
     Ok(out)
+}
+
+/// Path of the optional file `name` when it is present and matches its pin ([`Check::Stamp`]).
+pub fn optional_file(spec: &ModelSpec, models_dir: &Path, name: &str) -> Result<Option<PathBuf>> {
+    let Some(file) = spec.files.iter().find(|f| f.name == name) else { return Ok(None) };
+    let path = models_dir.join(&spec.dir).join(name);
+    Ok((file_status(&path, file.size, &file.sha256, Check::Stamp)? == FileStatus::Ok).then_some(path))
 }
 
 /// Status of one model file (see [`Check`]).
@@ -255,12 +273,15 @@ pub fn sha256_file(path: &Path) -> Result<String> {
 mod tests {
     use super::*;
 
+    const ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
     #[test]
     fn builtin_manifest_parses() {
         let m = Manifest::builtin();
         let p = m.get(PIANISSIMO).unwrap();
         assert_eq!(p.tagged_id(PIANISSIMO), "pianissimo-sv-int8@63730c6");
         assert!(p.files.iter().any(|f| f.name == "vocab.txt"));
+        assert!(p.files.iter().any(|f| f.name == TOKENIZER && f.optional));
         let banded = &p.derived[0];
         assert_eq!(banded.transform, Transform::BandedAttention);
         assert!(p.files.iter().any(|f| f.name == banded.from));
@@ -285,9 +306,11 @@ mod tests {
                     path: None,
                     size: 3,
                     sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into(),
+                    optional: false,
                 },
-                ModelFile { name: "b".into(), path: None, size: 1, sha256: "00".into() },
-                ModelFile { name: "c".into(), path: None, size: 1, sha256: "00".into() },
+                ModelFile { name: "b".into(), path: None, size: 1, sha256: "00".into(), optional: false },
+                ModelFile { name: "c".into(), path: None, size: 1, sha256: "00".into(), optional: false },
+                ModelFile { name: "e".into(), path: None, size: 3, sha256: ABC.into(), optional: true },
             ],
             derived: vec![DerivedFile {
                 name: "d".into(),
@@ -305,7 +328,13 @@ mod tests {
         assert_eq!(st[1].1, FileStatus::WrongSize { actual: 2 });
         assert_eq!(st[2].1, FileStatus::Missing);
         assert_eq!(st[3], ("d".to_string(), FileStatus::Missing));
+        // The optional file is not part of the check.
+        assert_eq!(st.len(), 4);
         assert!(installed_dir(&spec, &dir).is_err());
+        assert_eq!(optional_file(&spec, &dir, "e").unwrap(), None);
+        std::fs::write(dir.join("m/e"), "abc").unwrap();
+        assert_eq!(optional_file(&spec, &dir, "e").unwrap(), Some(dir.join("m/e")));
+        assert_eq!(optional_file(&spec, &dir, "a").unwrap(), Some(dir.join("m/a")));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

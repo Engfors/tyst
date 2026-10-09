@@ -342,8 +342,9 @@ General (launch at login, transcripts folder, speaker labels, language default) 
 
 ### 9.3 Custom vocabulary
 - Two lists, editable in Settings, stored as TOML in the config dir, importable/exportable:
-  1. **Terms** — preferred spellings (e.g. `HashiCorp`, `Terraform`, `Vault`, `Kubernetes`, customer names). Used for (a) **hotword/contextual biasing** if the decoder supports it (sherpa-onnx supports hotwords for transducers with modified beam search — evaluate in Phase 0) and (b) case-insensitive normalization of exact matches.
-  2. **Replacements** — `from → to` rules for systematic misrecognitions (e.g. `terra form → Terraform`, `hashi corp → HashiCorp`). Whole-word, case-insensitive match; preserves sentence-initial capitalization.
+  1. **Terms** — preferred spellings (e.g. `HashiCorp`, `Terraform`, `Vault`, `Kubernetes`, customer names). Used for (a) **phrase boosting** in the decoder (Pianissimo and Parakeet; ADR 0001 as amended) and (b) case-insensitive normalization of exact matches.
+  2. **Replacements** — `from → to` rules for systematic misrecognitions (e.g. `terra form → Terraform`, `hashi corp → HashiCorp`). Whole-word, case-insensitive match; preserves sentence-initial capitalization. When `to` only joins the words of `from` (or the rule is marked), `to` is boosted too; `from` never is.
+- Phrase boosting is on by default and can be turned off; its strength is fixed (not a setting). It needs Pianissimo's `tokenizer.model`, an optional model file.
 - Applied to final text for both meetings and dictation (and to partials, cheaply).
 
 ### 9.4 Meeting app detection (opt-in)

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-vocabulary-boost-ready"
+description = "Enables the vocabulary_boost_ready command without any pre-configured scope."
+commands.allow = ["vocabulary_boost_ready"]
+
+[[permission]]
+identifier = "deny-vocabulary-boost-ready"
+description = "Denies the vocabulary_boost_ready command without any pre-configured scope."
+commands.deny = ["vocabulary_boost_ready"]

@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use tyst_core::pipeline::PipelineEvent;
 use tyst_core::text::{term_hits, word_errors};
 use tyst_core::transcript::{Channel, Lang};
-use tyst_core::vocabulary::{self, VocabularyRules};
+use tyst_core::vocabulary::{self, BOOST_STRENGTH, MAX_BOOST_STRENGTH, VocabularyFile, VocabularyRules};
+use tyst_runtime::Runtime;
 
 use crate::stats;
 use crate::{EngineArgs, setup};
@@ -35,6 +36,11 @@ pub struct BenchArgs {
     /// Harness `summary.json` to compare against (its greedy / only-sv rows).
     #[arg(long)]
     pub baseline: Option<PathBuf>,
+    /// Also decode with phrase boosting at these strengths (comma-separated, above 0 and at most 1,
+    /// e.g. 0.25,0.5,1), boosting the terms and joining replacements of the terms file. Adds
+    /// `boost <s>` and `boost <s>+vocab` rows. Needs `tokenizer.model` (`tyst-cli models fetch`).
+    #[arg(long, value_delimiter = ',')]
+    pub boost: Vec<f32>,
     /// Do not spell out digits before scoring (harness `--no-number-norm`).
     #[arg(long)]
     pub no_number_norm: bool,
@@ -199,6 +205,9 @@ struct BaselineRow {
 }
 
 pub fn run(args: BenchArgs) -> Result<()> {
+    if let Some(bad) = args.boost.iter().find(|a| !(**a > 0.0 && **a <= MAX_BOOST_STRENGTH)) {
+        bail!("--boost {bad}: strengths must be above 0 and at most {MAX_BOOST_STRENGTH}");
+    }
     let (mut clips, warnings, root) = load_manifest(&args.manifest)?;
     if let Some(cats) = &args.categories {
         let wanted: Vec<&str> = cats.split(',').collect();
@@ -221,7 +230,7 @@ pub fn run(args: BenchArgs) -> Result<()> {
     // like the harness does.
     let mut engine_args = args.engine.clone();
     engine_args.vocab = None;
-    let rt = setup::load(&engine_args)?;
+    let mut rt = setup::load(&engine_args)?;
     let rss_after_load = stats::current_rss_mb();
 
     let out_dir = args.out.clone().unwrap_or_else(|| {
@@ -238,38 +247,43 @@ pub fn run(args: BenchArgs) -> Result<()> {
         let t0 = Instant::now();
         let pcm = tyst_core::audio_file::load_16k_mono(&clip.audio)?;
         let reference = std::fs::read_to_string(&clip.reference)?;
-        let mut pipeline = rt.pipeline(Channel::Others, false)?;
-        let mut texts = Vec::new();
-        let (mut decode_s, mut speech_s) = (0.0, 0.0);
-        let mut collect = |events: Vec<PipelineEvent>| {
-            for e in events {
-                if let PipelineEvent::Final { segment, stats, .. } = e {
-                    decode_s += stats.elapsed.as_secs_f64();
-                    speech_s += stats.audio.as_secs_f64();
-                    texts.push(segment.text);
-                }
-            }
-        };
-        for chunk in pcm.chunks(16_000) {
-            collect(pipeline.push(chunk)?);
-        }
-        collect(pipeline.flush()?);
-        let raw = texts.join(" ");
-        std::fs::write(hyp_dir.join(format!("{}.txt", clip.id)), format!("{raw}\n"))?;
         let lang = (!args.no_number_norm).then_some(clip.lang);
-        for (post, hyp) in [("raw", raw.clone()), ("vocab", vocab.apply(&raw))] {
-            let (errors, words) = word_errors(&reference, &hyp, lang);
-            let (found, exact, total) = term_hits(&reference, &hyp, &terms_file.terms);
-            for cat in [clip.category.clone(), "ALL".to_string()] {
-                let a = acc.entry((post.to_string(), cat)).or_default();
-                a.clips += 1;
-                a.errors += errors;
-                a.words += words;
-                a.term_found += found;
-                a.term_exact += exact;
-                a.term_total += total;
-                a.decode_s += decode_s;
-                a.speech_s += speech_s;
+        let mut runs = vec![(None, "raw".to_string(), "vocab".to_string())];
+        runs.extend(args.boost.iter().map(|a| (Some(*a), format!("boost {a}"), format!("boost {a}+vocab"))));
+        let (mut raw, mut decode_s, mut speech_s, mut segments) = (String::new(), 0.0, 0.0, 0);
+        for (strength, raw_post, vocab_post) in &runs {
+            // Boosted runs decode with the boost only; the text rules are scored separately below.
+            let rules = match strength {
+                None => VocabularyRules::default(),
+                Some(_) => VocabularyRules::new(&VocabularyFile { boost: true, ..terms_file.clone() }).boost_only(),
+            };
+            rt.boost_strength = strength.unwrap_or(BOOST_STRENGTH);
+            rt.set_vocabulary(rules);
+            if strength.is_some() && !rt.boosting() {
+                bail!("--boost needs tokenizer.model and at least one term: run `tyst-cli models fetch`");
+            }
+            let run = decode(&rt, &pcm)?;
+            if strength.is_none() {
+                (raw, decode_s, speech_s, segments) = run.clone();
+                std::fs::write(hyp_dir.join(format!("{}.txt", clip.id)), format!("{raw}\n"))?;
+            } else {
+                std::fs::write(hyp_dir.join(format!("{}.{raw_post}.txt", clip.id)), format!("{}\n", run.0))?;
+            }
+            let (hyp, run_decode_s, run_speech_s, _) = run;
+            for (post, hyp) in [(raw_post, hyp.clone()), (vocab_post, vocab.apply(&hyp))] {
+                let (errors, words) = word_errors(&reference, &hyp, lang);
+                let (found, exact, total) = term_hits(&reference, &hyp, &terms_file.terms);
+                for cat in [clip.category.clone(), "ALL".to_string()] {
+                    let a = acc.entry((post.to_string(), cat)).or_default();
+                    a.clips += 1;
+                    a.errors += errors;
+                    a.words += words;
+                    a.term_found += found;
+                    a.term_exact += exact;
+                    a.term_total += total;
+                    a.decode_s += run_decode_s;
+                    a.speech_s += run_speech_s;
+                }
             }
         }
         decode_total += decode_s;
@@ -279,14 +293,14 @@ pub fn run(args: BenchArgs) -> Result<()> {
             "{}: {:.1} s audio, {} segments, WER {:.1} %, RTF {:.3} ({:.1} s)",
             clip.id,
             pcm.len() as f64 / 16_000.0,
-            texts.len(),
+            segments,
             100.0 * e as f64 / w.max(1) as f64,
             decode_s / speech_s.max(1e-9),
             t0.elapsed().as_secs_f64()
         );
         clip_info.insert(
             clip.id.clone(),
-            ClipInfo { category: clip.category.clone(), audio_s: pcm.len() as f64 / 16_000.0, segments: texts.len() },
+            ClipInfo { category: clip.category.clone(), audio_s: pcm.len() as f64 / 16_000.0, segments },
         );
     }
 
@@ -337,6 +351,27 @@ pub fn run(args: BenchArgs) -> Result<()> {
     println!("{md}");
     eprintln!("results: {}", out_dir.display());
     Ok(())
+}
+
+/// Decodes a clip as one channel: (text, decode seconds, speech seconds, segments).
+fn decode(rt: &Runtime, pcm: &[f32]) -> Result<(String, f64, f64, usize)> {
+    let mut pipeline = rt.pipeline(Channel::Others, false)?;
+    let mut texts = Vec::new();
+    let (mut decode_s, mut speech_s) = (0.0, 0.0);
+    let mut collect = |events: Vec<PipelineEvent>| {
+        for e in events {
+            if let PipelineEvent::Final { segment, stats, .. } = e {
+                decode_s += stats.elapsed.as_secs_f64();
+                speech_s += stats.audio.as_secs_f64();
+                texts.push(segment.text);
+            }
+        }
+    };
+    for chunk in pcm.chunks(16_000) {
+        collect(pipeline.push(chunk)?);
+    }
+    collect(pipeline.flush()?);
+    Ok((texts.join(" "), decode_s, speech_s, texts.len()))
 }
 
 fn pct(x: Option<f64>) -> String {

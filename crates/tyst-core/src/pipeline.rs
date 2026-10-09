@@ -311,10 +311,14 @@ impl<D: SpeechDetector> ChannelPipeline<D> {
         samples: &[f32],
         end_sample: u64,
     ) -> Result<(AsrResult, String, DecodeStats)> {
+        // Both engines take the same boost: Parakeet v3 ships Pianissimo's `vocab.txt`, so the
+        // tokenizer's IDs fit it too.
+        let vocabulary = self.vocabulary.clone();
+        let boost = vocabulary.boost();
         let mut engines = self.engines.lock().map_err(|_| Error::Model("engine lock poisoned".into()))?;
         let engine = engines.engine(role)?;
         let t0 = Instant::now();
-        let result = engine.transcribe(samples)?;
+        let result = engine.transcribe_boosted(samples, boost)?;
         let stats = DecodeStats {
             audio: Duration::from_secs_f64(samples.len() as f64 / self.sample_rate as f64),
             elapsed: t0.elapsed(),
@@ -335,6 +339,7 @@ impl<D: SpeechDetector> ChannelPipeline<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::asr::boost::{BoostTree, PhraseBoost};
     use crate::router::{FixedRouter, LanguageMode};
     use crate::segmenter::EnergyDetector;
     use crate::transcript::Lang;
@@ -356,6 +361,11 @@ mod tests {
                 text: format!("vi kör terra form {} samples", pcm.len()), tokens: vec![], confidence: -0.1
             })
         }
+        fn transcribe_boosted(&mut self, pcm: &[f32], boost: Option<&PhraseBoost>) -> Result<AsrResult> {
+            let mut r = self.transcribe(pcm)?;
+            r.text = format!("{} boosted={}", r.text, boost.is_some());
+            Ok(r)
+        }
     }
 
     fn tone(secs: f32, loud: bool) -> Vec<f32> {
@@ -368,8 +378,8 @@ mod tests {
             .with_english_loader(Box::new(move || Ok(Box::new(FakeEngine { id: "en@1".into(), calls: calls.clone() }))))
             .shared();
         let vocab = VocabularyRules::new(&VocabularyFile {
-            terms: vec![],
-            replacements: vec![Replacement { from: "terra form".into(), to: "Terraform".into() }],
+            replacements: vec![Replacement::new("terra form", "Terraform")],
+            ..Default::default()
         });
         ChannelPipeline::new(
             Channel::Me,
@@ -456,5 +466,21 @@ mod tests {
             }
             e => panic!("unexpected {e:?}"),
         }
+    }
+
+    #[test]
+    fn boosts_both_engines() {
+        let calls = Arc::new(Mutex::new(vec![]));
+        let mut p = pipeline(false, calls);
+        let boost = PhraseBoost { tree: BoostTree::new(&[vec![1, 2]], 1.0, 2.0), alpha: 1.0 };
+        p.vocabulary = Arc::new((*p.vocabulary).clone().with_phrase_boost(boost));
+        let speech = [tone(0.5, false), tone(2.0, true), tone(1.0, false)].concat();
+        let text = |events: &[PipelineEvent]| match &events[0] {
+            PipelineEvent::Final { segment, .. } => segment.text.clone(),
+            e => panic!("unexpected {e:?}"),
+        };
+        assert!(text(&run(&mut p, &speech)).ends_with("boosted=true"));
+        p.router_mut().set_mode(LanguageMode::English);
+        assert!(text(&run(&mut p, &speech)).ends_with("boosted=true"));
     }
 }
