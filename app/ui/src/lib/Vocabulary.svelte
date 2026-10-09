@@ -3,9 +3,9 @@
   // vocabulary.toml in the config dir; applies from the next meeting. The same words also boost
   // the decoder (phrase boosting) once the tokenizer is installed.
   import { onDestroy, onMount } from "svelte";
-  import { api, errorText, onModels, type Replacement, type Vocabulary } from "./api";
+  import { api, errorText, MAX_PHRASE_CHARS, onModels, type Replacement, type Vocabulary } from "./api";
 
-  let vocab = $state<Vocabulary>({ boost: true, boost_strength: 1, terms: [], replacements: [] });
+  let vocab = $state<Vocabulary>({ boost: true, terms: [], replacements: [] });
   let newTerm = $state("");
   let newFrom = $state("");
   let newTo = $state("");
@@ -14,15 +14,13 @@
   let fetching = $state(false);
   let unlisten: (() => void) | undefined;
 
-  // Same rule as `Replacement::joins_words` in tyst-core: `to` is `from` without spaces.
-  const squeeze = (s: string) => s.replace(/\s+/g, "").toLowerCase();
-  const joinsWords = (r: Replacement) => squeeze(r.to) !== "" && squeeze(r.from) === squeeze(r.to);
-  const boosts = (r: Replacement) => r.boost ?? joinsWords(r);
+  // `joins_words` (the automatic choice) comes from the backend after each save.
+  const boosts = (r: Replacement) => r.boost ?? r.joins_words ?? false;
 
   function setRuleBoost(r: Replacement, on: boolean) {
     // Store the flag only where it differs from the automatic choice, to keep the file plain.
     vocab.replacements = vocab.replacements.map((x) =>
-      x === r ? { from: x.from, to: x.to, ...(on === joinsWords(x) ? {} : { boost: on }) } : x,
+      x === r ? { from: x.from, to: x.to, ...(on === (x.joins_words ?? false) ? {} : { boost: on }) } : x,
     );
     persist();
   }
@@ -40,7 +38,7 @@
 
   async function persist() {
     try {
-      await api.vocabularySet($state.snapshot(vocab));
+      vocab = await api.vocabularySet($state.snapshot(vocab));
       status = "Saved. Applies from the next meeting.";
     } catch (e) {
       status = errorText(e);
@@ -104,36 +102,18 @@
 <div class="vocab">
   <section>
     <label class="check">
-      <input
-        type="checkbox"
-        bind:checked={vocab.boost}
-        onchange={persist}
-      />
+      <input type="checkbox" bind:checked={vocab.boost} onchange={persist} />
       Listen for these words
     </label>
     <p class="muted">
       Makes the model more likely to hear your terms, and the corrected side of replacements, as you wrote
       them. Swedish and Auto only; English is not boosted yet.
     </p>
-    {#if vocab.boost}
-      <label class="strength">
-        Strength
-        <input
-          type="range"
-          min="0.25"
-          max="1"
-          step="0.25"
-          bind:value={vocab.boost_strength}
-          onchange={persist}
-        />
-        <span class="muted">{vocab.boost_strength.toFixed(2)}</span>
-      </label>
-      {#if !boostReady}
-        <p class="note">
-          Needs a small file (360 KB) from the Swedish model's page.
-          <button onclick={fetchTokenizer} disabled={fetching}>{fetching ? "Downloading…" : "Download"}</button>
-        </p>
-      {/if}
+    {#if vocab.boost && !boostReady}
+      <p class="note">
+        Needs a small file (360 KB) from the Swedish model's page.
+        <button onclick={fetchTokenizer} disabled={fetching}>{fetching ? "Downloading…" : "Download"}</button>
+      </p>
     {/if}
   </section>
 
@@ -141,7 +121,7 @@
     <h3>Terms</h3>
     <p class="muted">Preferred spellings. Exact matches are written this way, whatever the casing.</p>
     <form class="add" onsubmit={addTerm}>
-      <input type="text" bind:value={newTerm} placeholder="e.g. HashiCorp" />
+      <input type="text" bind:value={newTerm} placeholder="e.g. HashiCorp" maxlength={MAX_PHRASE_CHARS} />
       <button type="submit">Add</button>
     </form>
     <ul class="chips">
@@ -167,9 +147,9 @@
       actually said; it is ticked for you when it only joins words.
     </p>
     <form class="add" onsubmit={addRule}>
-      <input type="text" bind:value={newFrom} placeholder="terra form" />
+      <input type="text" bind:value={newFrom} placeholder="terra form" maxlength={MAX_PHRASE_CHARS} />
       <span class="muted">→</span>
-      <input type="text" bind:value={newTo} placeholder="Terraform" />
+      <input type="text" bind:value={newTo} placeholder="Terraform" maxlength={MAX_PHRASE_CHARS} />
       <button type="submit">Add</button>
     </form>
     <table>
@@ -272,15 +252,11 @@
     width: 70px;
     white-space: nowrap;
   }
-  .check,
-  .strength {
+  .check {
     display: flex;
     gap: 6px;
     align-items: center;
     margin-bottom: 4px;
-  }
-  .strength input {
-    width: 140px;
   }
   .note {
     display: flex;

@@ -46,6 +46,9 @@ pub struct Runtime {
     pub vocabulary: Arc<VocabularyRules>,
     pub mode: LanguageMode,
     pub load_time: Duration,
+    /// Strength [`set_vocabulary`](Self::set_vocabulary) compiles the boost at; the app keeps the
+    /// fixed default, `bench --boost` sweeps it.
+    pub boost_strength: f32,
     models_dir: PathBuf,
     /// Pianissimo's tokenizer, for phrase boosting; `None` until `tokenizer.model` is fetched.
     encoder: Option<Arc<SpmEncoder>>,
@@ -91,6 +94,7 @@ impl Runtime {
             vocabulary: Arc::new(opts.vocabulary.clone().with_boost(encoder.as_deref())),
             mode: opts.mode,
             load_time: t0.elapsed(),
+            boost_strength: tyst_core::vocabulary::BOOST_STRENGTH,
             models_dir: dir,
             encoder,
         })
@@ -102,7 +106,7 @@ impl Runtime {
         if self.encoder.is_none() {
             self.encoder = load_tokenizer(&Manifest::builtin(), &self.models_dir);
         }
-        self.vocabulary = Arc::new(rules.with_boost(self.encoder.as_deref()));
+        self.vocabulary = Arc::new(rules.with_boost_at(self.encoder.as_deref(), self.boost_strength));
     }
 
     /// True when phrase boosting is compiled into the current vocabulary.

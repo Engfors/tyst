@@ -212,4 +212,51 @@ mod tests {
         // The logprob is the chosen token's under the unboosted softmax, so lower than the leader's.
         assert!(boosted.logprobs[0] < plain.logprobs[0]);
     }
+
+    /// Joint with seeded random logits; blank leads on about half the frames.
+    struct Random {
+        seed: u64,
+    }
+
+    impl Random {
+        fn next(&mut self) -> f32 {
+            self.seed ^= self.seed << 13;
+            self.seed ^= self.seed >> 7;
+            self.seed ^= self.seed << 17;
+            (self.seed >> 40) as f32 / (1u64 << 24) as f32
+        }
+    }
+
+    impl JointNetwork for Random {
+        type State = ();
+        fn initial_state(&self) {}
+        fn step(&mut self, _frame: &[f32], _prev: u32, _state: &()) -> Result<(Vec<f32>, ())> {
+            let mut logits: Vec<f32> = (0..15).map(|_| self.next() * 8.0 - 4.0).collect();
+            if self.next() < 0.5 {
+                logits[BLANK as usize] += 6.0;
+            }
+            Ok((logits, ()))
+        }
+    }
+
+    #[test]
+    fn boost_without_a_reachable_phrase_changes_nothing() {
+        use super::super::boost::{BoostTree, CONTEXT_SCORE, DEPTH_SCALING, PhraseBoost};
+        let tree = |phrases: &[Vec<u32>]| PhraseBoost {
+            tree: BoostTree::new(phrases, CONTEXT_SCORE, DEPTH_SCALING),
+            alpha: 1.0,
+        };
+        // Empty, a token the model never emits (beyond the vocabulary), and blank only.
+        let boosts = [tree(&[]), tree(&[vec![99, 3]]), tree(&[vec![BLANK]])];
+        let bits = |d: &Decoded| d.logprobs.iter().map(|l| l.to_bits()).collect::<Vec<_>>();
+        for seed in 1..=200u64 {
+            let plain = greedy_decode(&mut Random { seed }, &frames(30), &CFG, None).unwrap();
+            for b in &boosts {
+                let boosted = greedy_decode(&mut Random { seed }, &frames(30), &CFG, Some(b)).unwrap();
+                assert_eq!(boosted.tokens, plain.tokens, "seed {seed}");
+                assert_eq!(boosted.frames, plain.frames, "seed {seed}");
+                assert_eq!(bits(&boosted), bits(&plain), "seed {seed}");
+            }
+        }
+    }
 }

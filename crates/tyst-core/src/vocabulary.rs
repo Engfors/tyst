@@ -16,18 +16,23 @@ use crate::asr::spm::SpmEncoder;
 use crate::text::{Phrase, replace_phrase};
 use crate::{Error, Result};
 
-/// Highest boost strength (alpha). Klang saw decoy words inserted and a worse WER at 2.0.
+/// The boost strength (alpha) the app decodes with. Fixed, not a setting; to be confirmed with
+/// `tyst-cli bench --boost` on the owner's `sv-terms` clips.
+pub const BOOST_STRENGTH: f32 = 1.0;
+/// Highest strength `bench --boost` accepts. Klang saw decoy words inserted and a worse WER at 2.0.
 pub const MAX_BOOST_STRENGTH: f32 = 1.0;
+/// Longest term or replacement side, in characters. Encoding a phrase is quadratic in its length.
+pub const MAX_PHRASE_CHARS: usize = 200;
+/// Most terms, and most replacements, in one vocabulary.
+pub const MAX_ENTRIES: usize = 2000;
 
-/// The vocabulary file: same shape as `eval/terms.toml`.
+/// The vocabulary file: same shape as `eval/terms.toml`. Unknown keys are ignored, so a
+/// `boost_strength` written by a test build still loads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VocabularyFile {
     /// Phrase boosting in the decoder.
     #[serde(default = "default_boost")]
     pub boost: bool,
-    /// Boost weight, 0 to [`MAX_BOOST_STRENGTH`].
-    #[serde(default = "default_boost_strength")]
-    pub boost_strength: f32,
     #[serde(default)]
     pub terms: Vec<String>,
     #[serde(default, rename = "replacement")]
@@ -38,18 +43,28 @@ fn default_boost() -> bool {
     true
 }
 
-fn default_boost_strength() -> f32 {
-    MAX_BOOST_STRENGTH
-}
-
 impl Default for VocabularyFile {
     fn default() -> Self {
-        Self {
-            boost: default_boost(),
-            boost_strength: default_boost_strength(),
-            terms: Vec::new(),
-            replacements: Vec::new(),
+        Self { boost: default_boost(), terms: Vec::new(), replacements: Vec::new() }
+    }
+}
+
+impl VocabularyFile {
+    /// Rejects entries over [`MAX_PHRASE_CHARS`] and lists over [`MAX_ENTRIES`], for files the
+    /// user saves or imports. Rules built from a file that slipped past skip such phrases.
+    pub fn check(&self) -> Result<()> {
+        let too_long = |s: &str| s.chars().count() > MAX_PHRASE_CHARS;
+        if self.terms.len() > MAX_ENTRIES || self.replacements.len() > MAX_ENTRIES {
+            return Err(Error::Config(format!(
+                "vocabulary: at most {MAX_ENTRIES} terms and {MAX_ENTRIES} replacements"
+            )));
         }
+        let long = self.terms.iter().any(|t| too_long(t))
+            || self.replacements.iter().any(|r| too_long(&r.from) || too_long(&r.to));
+        if long {
+            return Err(Error::Config(format!("vocabulary: entries are limited to {MAX_PHRASE_CHARS} characters")));
+        }
+        Ok(())
     }
 }
 
@@ -86,19 +101,19 @@ impl Replacement {
 pub struct VocabularyRules {
     replacements: Vec<(Phrase, String)>,
     terms: Vec<(Phrase, String)>,
-    /// Phrases to boost, and the strength; `None` when boosting is off.
-    boost_phrases: Option<(Vec<String>, f32)>,
+    /// Phrases to boost; `None` when boosting is off.
+    boost_phrases: Option<Vec<String>>,
     /// The compiled boost, once a tokenizer is known ([`Self::with_boost`]).
     boost: Option<Arc<PhraseBoost>>,
 }
 
 impl VocabularyRules {
     pub fn new(file: &VocabularyFile) -> Self {
-        let strength = file.boost_strength.clamp(0.0, MAX_BOOST_STRENGTH);
-        let boost_phrases = (file.boost && strength > 0.0).then(|| {
-            let terms = file.terms.iter().cloned();
-            let tos = file.replacements.iter().filter(|r| r.boosts()).map(|r| r.to.clone());
-            (terms.chain(tos).collect(), strength)
+        let boost_phrases = file.boost.then(|| {
+            let terms = file.terms.iter().take(MAX_ENTRIES);
+            let tos = file.replacements.iter().take(MAX_ENTRIES).filter(|r| r.boosts()).map(|r| &r.to);
+            let fits = |p: &&String| p.chars().count() <= MAX_PHRASE_CHARS;
+            terms.chain(tos).filter(fits).cloned().collect()
         });
         Self {
             replacements: file.replacements.iter().map(|r| (Phrase::new(&r.from), r.to.clone())).collect(),
@@ -108,12 +123,19 @@ impl VocabularyRules {
         }
     }
 
-    /// Compiles the boost with `encoder` (the decoder's tokenizer). Without one, or with nothing
-    /// to boost, decoding stays unboosted.
-    pub fn with_boost(mut self, encoder: Option<&SpmEncoder>) -> Self {
+    /// Compiles the boost with `encoder` (the decoder's tokenizer) at [`BOOST_STRENGTH`]. Without
+    /// an encoder, or with nothing to boost, decoding stays unboosted.
+    pub fn with_boost(self, encoder: Option<&SpmEncoder>) -> Self {
+        self.with_boost_at(encoder, BOOST_STRENGTH)
+    }
+
+    /// [`with_boost`](Self::with_boost) at another strength, capped at [`MAX_BOOST_STRENGTH`]
+    /// (for `bench --boost`).
+    pub fn with_boost_at(mut self, encoder: Option<&SpmEncoder>, strength: f32) -> Self {
+        let strength = strength.min(MAX_BOOST_STRENGTH);
         self.boost = match (encoder, &self.boost_phrases) {
-            (Some(encoder), Some((phrases, strength))) if !phrases.is_empty() => {
-                let boost = PhraseBoost::new(phrases, encoder, *strength);
+            (Some(encoder), Some(phrases)) if !phrases.is_empty() && strength > 0.0 => {
+                let boost = PhraseBoost::new(phrases, encoder, strength);
                 log::info!("phrase boost: {} phrases, {} states, strength {strength}", phrases.len(), boost.tree.len());
                 Some(Arc::new(boost))
             }
@@ -259,21 +281,31 @@ mod tests {
         )
         .unwrap();
         assert!(file.boost);
-        assert_eq!(file.boost_strength, MAX_BOOST_STRENGTH);
         let r = VocabularyRules::new(&file);
-        let (phrases, strength) = r.boost_phrases.clone().unwrap();
-        assert_eq!(phrases, vec!["Terraform", "pull request", "HashiCorp", "Kubernetes"]);
-        assert_eq!(strength, 1.0);
+        assert_eq!(r.boost_phrases.clone().unwrap(), vec!["Terraform", "pull request", "HashiCorp", "Kubernetes"]);
         // No tokenizer: nothing compiled.
         assert!(r.with_boost(None).boost().is_none());
     }
 
     #[test]
-    fn boost_can_be_turned_off_and_strength_is_capped() {
+    fn boost_can_be_turned_off() {
         let off = VocabularyFile { boost: false, terms: vec!["Tyst".into()], ..Default::default() };
         assert!(VocabularyRules::new(&off).boost_phrases.is_none());
-        let strong = VocabularyFile { boost_strength: 3.0, terms: vec!["Tyst".into()], ..Default::default() };
-        assert_eq!(VocabularyRules::new(&strong).boost_phrases.unwrap().1, MAX_BOOST_STRENGTH);
+    }
+
+    #[test]
+    fn long_entries_and_lists_are_limited() {
+        let long = "x".repeat(MAX_PHRASE_CHARS + 1);
+        let file = VocabularyFile { terms: vec!["Tyst".into(), long.clone()], ..Default::default() };
+        assert!(file.check().is_err());
+        assert_eq!(VocabularyRules::new(&file).boost_phrases.unwrap(), vec!["Tyst"]);
+        let rule = VocabularyFile { replacements: vec![Replacement::new("a", &long)], ..Default::default() };
+        assert!(rule.check().is_err());
+        let many = VocabularyFile { terms: vec!["a".into(); MAX_ENTRIES + 1], ..Default::default() };
+        assert!(many.check().is_err());
+        assert_eq!(VocabularyRules::new(&many).boost_phrases.unwrap().len(), MAX_ENTRIES);
+        let fine = VocabularyFile { terms: vec!["å".repeat(MAX_PHRASE_CHARS)], ..Default::default() };
+        assert!(fine.check().is_ok());
     }
 
     #[test]
@@ -289,13 +321,16 @@ mod tests {
             }
         );
         let mut new = old.clone();
-        new.boost_strength = 0.5;
+        new.boost = false;
         new.replacements[0].boost = Some(true);
         let text = toml::to_string(&new).unwrap();
         assert_eq!(toml::from_str::<VocabularyFile>(&text).unwrap(), new);
         // An unset per-rule flag stays out of the file.
         let old_text = toml::to_string(&old).unwrap();
         assert!(!old_text.split("[[replacement]]").nth(1).unwrap().contains("boost"), "{old_text}");
+        // A strength saved by a test build is ignored.
+        let test_build: VocabularyFile = toml::from_str("boost_strength = 0.5\nterms = [\"a\"]\n").unwrap();
+        assert_eq!(test_build.terms, vec!["a"]);
     }
 
     #[test]

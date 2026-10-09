@@ -187,18 +187,21 @@ export type ModelsEvent =
 export interface Replacement {
   from: string;
   to: string;
-  /** Boost `to` in the decoder; unset means only when the rule just joins words. */
+  /** Boost `to` in the decoder; unset means `joins_words`. */
   boost?: boolean;
+  /** Set by the backend: whether the rule only joins words, the default for `boost`. */
+  joins_words?: boolean;
 }
 
 export interface Vocabulary {
   /** Phrase boosting in the decoder. */
   boost: boolean;
-  /** Boost weight, up to 1. */
-  boost_strength: number;
   terms: string[];
   replacements: Replacement[];
 }
+
+/** Longest term or replacement side (`MAX_PHRASE_CHARS` in tyst-core). */
+export const MAX_PHRASE_CHARS = 200;
 
 export const api = {
   appState: () => invoke<Snapshot>("app_state"),
@@ -224,7 +227,7 @@ export const api = {
   modelsVerify: (full: boolean) => invoke<string[]>("models_verify", { full }),
   modelsInstalled: () => invoke<boolean>("models_installed"),
   vocabularyGet: () => invoke<Vocabulary>("vocabulary_get"),
-  vocabularySet: (vocabulary: Vocabulary) => invoke<void>("vocabulary_set", { vocabulary }),
+  vocabularySet: (vocabulary: Vocabulary) => invoke<Vocabulary>("vocabulary_set", { vocabulary }),
   vocabularyImport: () => invoke<Vocabulary | null>("vocabulary_import"),
   vocabularyExport: () => invoke<string | null>("vocabulary_export"),
   vocabularyBoostReady: () => invoke<boolean>("vocabulary_boost_ready"),
