@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail};
 use clap::Args;
 use serde::{Deserialize, Serialize};
 use tyst_core::pipeline::PipelineEvent;
-use tyst_core::text::{term_hits, word_errors};
+use tyst_core::text::{term_hits, term_insertions, word_errors};
 use tyst_core::transcript::{Channel, Lang};
 use tyst_core::vocabulary::{self, BOOST_STRENGTH, MAX_BOOST_STRENGTH, VocabularyFile, VocabularyRules};
 use tyst_runtime::Runtime;
@@ -27,6 +27,9 @@ pub struct BenchArgs {
     /// Only these categories (comma-separated), e.g. sv,en,mixed,sv-terms.
     #[arg(long)]
     pub categories: Option<String>,
+    /// Only these clips (comma-separated ids), e.g. en-01,en-02,en-03.
+    #[arg(long, value_delimiter = ',')]
+    pub clips: Vec<String>,
     /// Only the first N clips.
     #[arg(long)]
     pub limit: Option<usize>,
@@ -152,6 +155,7 @@ struct Acc {
     term_found: usize,
     term_exact: usize,
     term_total: usize,
+    term_insertions: usize,
     decode_s: f64,
     speech_s: f64,
 }
@@ -164,6 +168,8 @@ struct Row {
     wer: Option<f64>,
     term_recall: Option<f64>,
     term_exact: Option<f64>,
+    /// Term occurrences in the transcripts beyond those in the references.
+    term_insertions: usize,
     rtf: Option<f64>,
     baseline_wer: Option<f64>,
 }
@@ -212,6 +218,9 @@ pub fn run(args: BenchArgs) -> Result<()> {
     if let Some(cats) = &args.categories {
         let wanted: Vec<&str> = cats.split(',').collect();
         clips.retain(|c| wanted.contains(&c.category.as_str()));
+    }
+    if !args.clips.is_empty() {
+        clips.retain(|c| args.clips.contains(&c.id));
     }
     if let Some(n) = args.limit {
         clips.truncate(n);
@@ -273,6 +282,7 @@ pub fn run(args: BenchArgs) -> Result<()> {
             for (post, hyp) in [(raw_post, hyp.clone()), (vocab_post, vocab.apply(&hyp))] {
                 let (errors, words) = word_errors(&reference, &hyp, lang);
                 let (found, exact, total) = term_hits(&reference, &hyp, &terms_file.terms);
+                let inserted = term_insertions(&reference, &hyp, &terms_file.terms);
                 for cat in [clip.category.clone(), "ALL".to_string()] {
                     let a = acc.entry((post.to_string(), cat)).or_default();
                     a.clips += 1;
@@ -281,6 +291,7 @@ pub fn run(args: BenchArgs) -> Result<()> {
                     a.term_found += found;
                     a.term_exact += exact;
                     a.term_total += total;
+                    a.term_insertions += inserted;
                     a.decode_s += run_decode_s;
                     a.speech_s += run_speech_s;
                 }
@@ -326,6 +337,7 @@ pub fn run(args: BenchArgs) -> Result<()> {
             wer: ratio(a.errors, a.words),
             term_recall: ratio(a.term_found, a.term_total),
             term_exact: ratio(a.term_exact, a.term_total),
+            term_insertions: a.term_insertions,
             rtf: (a.speech_s > 0.0).then(|| a.decode_s / a.speech_s),
             baseline_wer: baseline.get(&(post.clone(), cat.clone())).copied(),
         })
@@ -392,14 +404,17 @@ fn render(s: &Summary) -> String {
         s.engine_rtf
     );
     out.push_str("WER, term recall and term exact spelling in %. Baseline: Phase 0 harness, greedy, only-sv.\n\n");
-    out.push_str("| category | post | clips | WER | baseline WER | Δ pp | term recall | term exact | RTF |\n|---|---|---|---|---|---|---|---|---|\n");
+    out.push_str(
+        "Inserted: term occurrences in the transcripts beyond those in the references (decoys count every time).\n\n",
+    );
+    out.push_str("| category | post | clips | WER | baseline WER | Δ pp | term recall | term exact | inserted | RTF |\n|---|---|---|---|---|---|---|---|---|---|\n");
     for r in &s.rows {
         let delta = match (r.wer, r.baseline_wer) {
             (Some(a), Some(b)) => format!("{:+.1}", 100.0 * (a - b)),
             _ => "–".into(),
         };
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             r.category,
             r.post,
             r.clips,
@@ -408,6 +423,7 @@ fn render(s: &Summary) -> String {
             delta,
             pct(r.term_recall),
             pct(r.term_exact),
+            r.term_insertions,
             r.rtf.map_or("–".into(), |v| format!("{v:.3}"))
         ));
     }
