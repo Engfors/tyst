@@ -110,10 +110,12 @@ pub struct VocabularyRules {
 impl VocabularyRules {
     pub fn new(file: &VocabularyFile) -> Self {
         let boost_phrases = file.boost.then(|| {
-            let terms = file.terms.iter().take(MAX_ENTRIES);
-            let tos = file.replacements.iter().take(MAX_ENTRIES).filter(|r| r.boosts()).map(|r| &r.to);
+            // Over-long entries are dropped before the cap, so they cannot take a valid phrase's
+            // place in a file that skipped `check` (hand-edited, or loaded at startup).
             let fits = |p: &&String| p.chars().count() <= MAX_PHRASE_CHARS;
-            terms.chain(tos).filter(fits).cloned().collect()
+            let terms = file.terms.iter().filter(fits).take(MAX_ENTRIES);
+            let tos = file.replacements.iter().filter(|r| r.boosts()).map(|r| &r.to).filter(fits).take(MAX_ENTRIES);
+            terms.chain(tos).cloned().collect()
         });
         Self {
             replacements: file.replacements.iter().map(|r| (Phrase::new(&r.from), r.to.clone())).collect(),
@@ -304,6 +306,10 @@ mod tests {
         let many = VocabularyFile { terms: vec!["a".into(); MAX_ENTRIES + 1], ..Default::default() };
         assert!(many.check().is_err());
         assert_eq!(VocabularyRules::new(&many).boost_phrases.unwrap().len(), MAX_ENTRIES);
+        let mut crowded = vec![long.clone(); MAX_ENTRIES];
+        crowded.push("Kubernetes".into());
+        let crowded = VocabularyFile { terms: crowded, ..Default::default() };
+        assert_eq!(VocabularyRules::new(&crowded).boost_phrases.unwrap(), vec!["Kubernetes"]);
         let fine = VocabularyFile { terms: vec!["å".repeat(MAX_PHRASE_CHARS)], ..Default::default() };
         assert!(fine.check().is_ok());
     }

@@ -1,0 +1,47 @@
+# English vocabulary for the forced-English boosting check (issue #38). Same shape as terms.toml.
+# Real terms: the technical terms and names that occur in the owner `en` clips. Decoys: names and
+# products that occur in none of the owner clips. `bench` counts every term occurrence a transcript
+# has beyond its reference as "inserted", so a decoy only counts where it was not said.
+# Several decoys sound close to words that are said (Karina/Karin, Stockton/Stockholm,
+# Helmut/Helm, Terragrunt/Terraform), which is where boosting is most likely to misfire.
+
+terms = [
+  # in the clips
+  "Terraform",
+  "HashiCorp",
+  "Vault",
+  "Kubernetes",
+  "GitHub",
+  "pull request",
+  "pipeline",
+  "deploy",
+  "state drift",
+  "Helm",
+  "staging",
+  "Tyst",
+  "Karin",
+  "Stockholm",
+  # decoys
+  "Karina",
+  "Stockton",
+  "Helmut",
+  "Terragrunt",
+  "Grafana",
+  "Jenkins",
+  "Ansible",
+  "Datadog",
+  "Mattias",
+  "Gothenburg",
+]
+
+[[replacement]]
+from = "terra form"
+to = "Terraform"
+
+[[replacement]]
+from = "hashi corp"
+to = "HashiCorp"
+
+[[replacement]]
+from = "git hub"
+to = "GitHub"
