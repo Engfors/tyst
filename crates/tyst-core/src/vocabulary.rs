@@ -107,14 +107,15 @@ pub struct VocabularyRules {
     boost: Option<Arc<PhraseBoost>>,
 }
 
+fn fitting_boost_phrases<'a>(phrases: impl Iterator<Item = &'a String>) -> impl Iterator<Item = &'a String> {
+    phrases.filter(|p| p.chars().count() <= MAX_PHRASE_CHARS).take(MAX_ENTRIES)
+}
+
 impl VocabularyRules {
     pub fn new(file: &VocabularyFile) -> Self {
         let boost_phrases = file.boost.then(|| {
-            // Over-long entries are dropped before the cap, so they cannot take a valid phrase's
-            // place in a file that skipped `check` (hand-edited, or loaded at startup).
-            let fits = |p: &&String| p.chars().count() <= MAX_PHRASE_CHARS;
-            let terms = file.terms.iter().filter(fits).take(MAX_ENTRIES);
-            let tos = file.replacements.iter().filter(|r| r.boosts()).map(|r| &r.to).filter(fits).take(MAX_ENTRIES);
+            let terms = fitting_boost_phrases(file.terms.iter());
+            let tos = fitting_boost_phrases(file.replacements.iter().filter(|r| r.boosts()).map(|r| &r.to));
             terms.chain(tos).cloned().collect()
         });
         Self {

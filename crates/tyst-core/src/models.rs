@@ -290,10 +290,8 @@ mod tests {
         assert!(vad.files[0].url(vad).ends_with("/resolve/fba88cd2e921609e7675c3aaf51e0b9b295da4bc/silero_vad.onnx"));
     }
 
-    /// English boosting compiles phrases with Pianissimo's tokenizer and applies the ids to
-    /// Parakeet's logits, which is only right while both models ship the same `vocab.txt`.
     #[test]
-    fn pianissimo_and_parakeet_share_the_vocabulary() {
+    fn pianissimo_and_parakeet_vocab_txt_pins_match() {
         let m = Manifest::builtin();
         let vocab = |id: &str| m.get(id).unwrap().files.iter().find(|f| f.name == "vocab.txt").unwrap().clone();
         let (p, e) = (vocab(PIANISSIMO), vocab(PARAKEET));

@@ -36,22 +36,29 @@
     }
   }
 
-  // Saves run one at a time and each sends the list as it is when it starts, so the file ends
-  // with the latest edit; a reply is shown only if nothing was edited after it was asked for.
-  let edits = 0;
-  let saving: Promise<void> = Promise.resolve();
+  let saveEpoch = 0;
+  let saveQueue: Promise<void> = Promise.resolve();
+
+  function queueLatestSave(run: (isCurrent: () => boolean) => Promise<void>) {
+    const epoch = ++saveEpoch;
+    const isCurrent = () => epoch === saveEpoch;
+    saveQueue = saveQueue.then(() => run(isCurrent));
+  }
+
+  function invalidatePendingSaves() {
+    saveEpoch++;
+  }
 
   function persist() {
-    const edit = ++edits;
-    saving = saving.then(async () => {
-      if (edit !== edits) return; // a newer save sends the newer list
+    queueLatestSave(async (isCurrent) => {
+      if (!isCurrent()) return;
       try {
         const saved = await api.vocabularySet($state.snapshot(vocab));
-        if (edit !== edits) return;
+        if (!isCurrent()) return;
         vocab = saved;
         status = "Saved. Applies from the next meeting.";
       } catch (e) {
-        if (edit === edits) status = errorText(e);
+        if (isCurrent()) status = errorText(e);
       }
     });
   }
@@ -78,10 +85,10 @@
 
   async function importFile() {
     try {
-      await saving; // the import's write lands after any save already running
+      await saveQueue;
       const v = await api.vocabularyImport();
       if (v) {
-        edits++; // a save still queued or in flight must not replace the imported list
+        invalidatePendingSaves();
         vocab = v;
         status = "Imported.";
       }

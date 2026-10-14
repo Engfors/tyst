@@ -168,7 +168,6 @@ struct Row {
     wer: Option<f64>,
     term_recall: Option<f64>,
     term_exact: Option<f64>,
-    /// Term occurrences in the transcripts beyond those in the references.
     term_insertions: usize,
     rtf: Option<f64>,
     baseline_wer: Option<f64>,
