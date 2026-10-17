@@ -239,6 +239,10 @@ pub fn run(args: BenchArgs) -> Result<()> {
     let mut engine_args = args.engine.clone();
     engine_args.vocab = None;
     let mut rt = setup::load(&engine_args)?;
+    // Measure boosted English even when the product gate (`BOOST_ENGLISH`) is off.
+    if !args.boost.is_empty() {
+        rt.boost_english = true;
+    }
     let rss_after_load = stats::current_rss_mb();
 
     let out_dir = args.out.clone().unwrap_or_else(|| {

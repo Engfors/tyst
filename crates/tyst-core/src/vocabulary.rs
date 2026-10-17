@@ -21,6 +21,11 @@ use crate::{Error, Result};
 pub const BOOST_STRENGTH: f32 = 1.0;
 /// Highest strength `bench --boost` accepts. Klang saw decoy words inserted and a worse WER at 2.0.
 pub const MAX_BOOST_STRENGTH: f32 = 1.0;
+/// Whether forced English (Parakeet, [`crate::router::EngineRole::English`]) gets the phrase-boost
+/// tree. Swedish / auto (Pianissimo) is unaffected. Issue #38 option 2: off after `fleurs-en`
+/// (term-free) WER at strength 1.0 rose vs raw (`docs/eval/en-boost-gate/`). Owner `en-01`…`en-03`
+/// still need a re-run when the wavs are available.
+pub const BOOST_ENGLISH: bool = false;
 /// Longest term or replacement side, in characters. Encoding a phrase is quadratic in its length.
 pub const MAX_PHRASE_CHARS: usize = 200;
 /// Most terms, and most replacements, in one vocabulary.

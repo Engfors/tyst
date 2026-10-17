@@ -49,6 +49,10 @@ pub struct Runtime {
     /// Strength [`set_vocabulary`](Self::set_vocabulary) compiles the boost at; the app keeps the
     /// fixed default, `bench --boost` sweeps it.
     pub boost_strength: f32,
+    /// When true, forced English gets the boost tree even if
+    /// [`tyst_core::vocabulary::BOOST_ENGLISH`] is false. `bench --boost` sets this so the English
+    /// gate can still be measured.
+    pub boost_english: bool,
     models_dir: PathBuf,
     /// Pianissimo's tokenizer, for phrase boosting; `None` until `tokenizer.model` is fetched.
     encoder: Option<Arc<SpmEncoder>>,
@@ -95,6 +99,7 @@ impl Runtime {
             mode: opts.mode,
             load_time: t0.elapsed(),
             boost_strength: tyst_core::vocabulary::BOOST_STRENGTH,
+            boost_english: tyst_core::vocabulary::BOOST_ENGLISH,
             models_dir: dir,
             encoder,
         })
@@ -133,7 +138,7 @@ impl Runtime {
         let router = FixedRouter::new(mode, initial, Duration::from_millis(1500));
         Ok(ChannelPipeline::new(
             channel,
-            PipelineConfig { partials, ..Default::default() },
+            PipelineConfig { partials, boost_english: self.boost_english, ..Default::default() },
             vad,
             self.engines.clone(),
             Box::new(router),

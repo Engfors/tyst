@@ -9,7 +9,9 @@ instead (the fallback in SPEC 4.1).
 
 No audio, transcripts or results are committed. Clips live under `clips_root` (default
 `~/tyst-eval/clips`), models under `$TYST_MODELS` (default `~/.cache/tyst-eval/models`), results
-under `eval/results/` (git-ignored).
+under `eval/results/` (git-ignored). Shareable English boost-gate summaries for issue #38 live under
+[`docs/eval/en-boost-gate/`](../docs/eval/en-boost-gate/); re-run with
+[`english-boost-gate.sh`](english-boost-gate.sh).
 
 ## Setup
 
