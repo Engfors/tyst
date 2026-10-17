@@ -291,6 +291,14 @@ mod tests {
     }
 
     #[test]
+    fn pianissimo_and_parakeet_vocab_txt_pins_match() {
+        let m = Manifest::builtin();
+        let vocab = |id: &str| m.get(id).unwrap().files.iter().find(|f| f.name == "vocab.txt").unwrap().clone();
+        let (p, e) = (vocab(PIANISSIMO), vocab(PARAKEET));
+        assert_eq!((p.size, &p.sha256), (e.size, &e.sha256), "boosting Parakeet needs Pianissimo's tokenizer to match");
+    }
+
+    #[test]
     fn verify_reports_missing_and_wrong_files() {
         let dir = std::env::temp_dir().join(format!("tyst-models-{}", std::process::id()));
         let spec = ModelSpec {

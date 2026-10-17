@@ -1,0 +1,40 @@
+# English vocabulary for the forced-English boosting check (issue #38). Same shape as terms.toml.
+
+terms = [
+  "Terraform",
+  "HashiCorp",
+  "Vault",
+  "Kubernetes",
+  "GitHub",
+  "pull request",
+  "pipeline",
+  "deploy",
+  "state drift",
+  "Helm",
+  "staging",
+  "Tyst",
+  "Karin",
+  "Stockholm",
+  "Karina",
+  "Stockton",
+  "Helmut",
+  "Terragrunt",
+  "Grafana",
+  "Jenkins",
+  "Ansible",
+  "Datadog",
+  "Mattias",
+  "Gothenburg",
+]
+
+[[replacement]]
+from = "terra form"
+to = "Terraform"
+
+[[replacement]]
+from = "hashi corp"
+to = "HashiCorp"
+
+[[replacement]]
+from = "git hub"
+to = "GitHub"

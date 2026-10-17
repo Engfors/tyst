@@ -309,6 +309,18 @@ pub fn term_hits(reference: &str, hypothesis: &str, terms: &[String]) -> (usize,
     (found, exact, total)
 }
 
+/// Term occurrences in `hypothesis` beyond those in `reference`: words the decoder put in that
+/// were not said (decoy terms never occur in the reference, so every hit counts).
+pub fn term_insertions(reference: &str, hypothesis: &str, terms: &[String]) -> usize {
+    terms
+        .iter()
+        .map(|t| {
+            let p = Phrase::new(t);
+            p.find_all(hypothesis).len().saturating_sub(p.find_all(reference).len())
+        })
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +376,12 @@ mod tests {
         let (found, exact, total) =
             term_hits("Terraform och Terraform, en pull request", "terraform och Terraform, en pull-request", &terms);
         assert_eq!((found, exact, total), (2, 1, 3));
+    }
+
+    #[test]
+    fn counts_term_insertions() {
+        let terms = vec!["Terraform".to_string(), "Grafana".to_string()];
+        assert_eq!(term_insertions("Terraform igen", "terraform, Terraform och Grafana", &terms), 2);
+        assert_eq!(term_insertions("Terraform och Terraform", "Terraform", &terms), 0);
     }
 }

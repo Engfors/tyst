@@ -36,13 +36,31 @@
     }
   }
 
-  async function persist() {
-    try {
-      vocab = await api.vocabularySet($state.snapshot(vocab));
-      status = "Saved. Applies from the next meeting.";
-    } catch (e) {
-      status = errorText(e);
-    }
+  let saveEpoch = 0;
+  let saveQueue: Promise<void> = Promise.resolve();
+
+  function queueLatestSave(run: (isCurrent: () => boolean) => Promise<void>) {
+    const epoch = ++saveEpoch;
+    const isCurrent = () => epoch === saveEpoch;
+    saveQueue = saveQueue.then(() => run(isCurrent));
+  }
+
+  function invalidatePendingSaves() {
+    saveEpoch++;
+  }
+
+  function persist() {
+    queueLatestSave(async (isCurrent) => {
+      if (!isCurrent()) return;
+      try {
+        const saved = await api.vocabularySet($state.snapshot(vocab));
+        if (!isCurrent()) return;
+        vocab = saved;
+        status = "Saved. Applies from the next meeting.";
+      } catch (e) {
+        if (isCurrent()) status = errorText(e);
+      }
+    });
   }
 
   function addTerm(e: Event) {
@@ -67,8 +85,10 @@
 
   async function importFile() {
     try {
+      await saveQueue;
       const v = await api.vocabularyImport();
       if (v) {
+        invalidatePendingSaves();
         vocab = v;
         status = "Imported.";
       }
