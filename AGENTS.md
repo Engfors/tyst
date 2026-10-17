@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-Guidance for Claude Code in this repository. The full specification is [SPEC.md](SPEC.md); binding
+Guidance for coding agents in this repository. The full specification is [SPEC.md](SPEC.md); binding
 decisions are in [docs/decisions/](docs/decisions/).
 
 ## Rules (SPEC section 0)

@@ -3,11 +3,11 @@
 > **Working name:** `Tyst` (Swedish for "quiet" — nothing leaves the device). Final name TBD — rename with a project-wide find/replace (`Tyst` / `tyst`).
 > **Status:** Draft v1 — 2026-10-02
 > **Owner:** Emil Engfors
-> **Audience:** Claude Code (implementation) and the owner (review).
+> **Audience:** Coding agents (implementation) and the owner (review).
 
 ---
 
-## 0. Instructions for Claude Code
+## 0. Instructions for coding agents
 
 - **Language:** All code, comments, docs, commit messages, PR titles/descriptions, issue text and file names are in **English**, even when the owner prompts in Swedish.
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`). Small, focused commits.
@@ -15,7 +15,7 @@
 - **Local-only is a hard rule.** No network calls from the core crate, ever. The only permitted network access in the whole app: (1) model download on first run / on demand, (2) the update check (section 9.7). Both are user-visible and can be disabled.
 - **Never log transcript text or audio** — not even at debug level. Logs may contain timings, sizes, model names and error codes.
 - **Ask, don't guess,** on anything listed in section 15 (Open questions).
-- Suggest creating a `CLAUDE.md` from this section plus the repo layout once Phase 1 scaffolding exists.
+- Suggest creating an `AGENTS.md` from this section plus the repo layout once Phase 1 scaffolding exists.
 
 ---
 
@@ -104,7 +104,7 @@ The app must run comfortably on CPU only; GPU acceleration is a bonus, not a req
 ```
 tyst/
 ├── SPEC.md
-├── CLAUDE.md                  (created in Phase 1)
+├── AGENTS.md                  (created in Phase 1)
 ├── README.md
 ├── LICENSE                    (TBD, see §15)
 ├── THIRD_PARTY_NOTICES.md
