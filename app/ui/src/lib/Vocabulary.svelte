@@ -126,8 +126,8 @@
       Listen for these words
     </label>
     <p class="muted">
-      Makes the model more likely to hear your terms, and the corrected side of replacements, as you wrote
-      them.
+      Makes the Swedish model more likely to hear your terms, and the corrected side of replacements, as
+      you wrote them. Forced English does not use this in the decoder.
     </p>
     {#if vocab.boost && !boostReady}
       <p class="note">

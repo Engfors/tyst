@@ -29,6 +29,13 @@ too, so there is one native dependency. sherpa-onnx is not used.
   runtime. Parakeet (forced English) is boosted too: it ships the same `vocab.txt`, so the same
   tokenizer applies. Owner bench at strength 1.0: `sv-terms` term recall 75.9 → 83.3 % (WER 6.0 →
   5.7 %, `sv` unchanged at 4.8 %); `en` term recall 83.3 → 94.4 % (WER 4.5 → 4.4 %).
+  *Amended 2026-10-17 (issue #38 option 2):* forced English no longer gets the boost tree
+  (`vocabulary::BOOST_ENGLISH = false`); Swedish / auto still does. On term-free `fleurs-en`
+  (25 clips, Parakeet, `eval/terms-en.toml` including decoys) raw WER was 25.7 % and strength
+  1.0 was 26.1 % (0 insertions); strengths 0.25 and 0.5 were 25.5 %. Summaries:
+  [`docs/eval/en-boost-gate/fleurs-en/`](../eval/en-boost-gate/fleurs-en/). Owner `en` wavs are
+  still outside git — re-run `eval/english-boost-gate.sh` when they are present before closing
+  the issue.
 - Parakeet v3 (only used for forced English, ADR 0002) needs the onnx-asr export of Parakeet,
   not sherpa-onnx's, so both models share one loader.
 

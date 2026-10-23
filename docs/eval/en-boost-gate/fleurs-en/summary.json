@@ -1,0 +1,340 @@
+{
+  "time": "2026-10-17T06:27:33.337836248+00:00",
+  "platform": "linux x86_64",
+  "threads": 4,
+  "engine": [
+    "parakeet-v3-int8@8f23f0c"
+  ],
+  "clips": {
+    "fleurs-en-11559094331412401332": {
+      "category": "fleurs-en",
+      "audio_s": 7.68,
+      "segments": 1
+    },
+    "fleurs-en-12356293452530186109": {
+      "category": "fleurs-en",
+      "audio_s": 11.64,
+      "segments": 2
+    },
+    "fleurs-en-12618421744672029626": {
+      "category": "fleurs-en",
+      "audio_s": 5.7,
+      "segments": 1
+    },
+    "fleurs-en-13458636098813464476": {
+      "category": "fleurs-en",
+      "audio_s": 6.66,
+      "segments": 1
+    },
+    "fleurs-en-15739600005438498912": {
+      "category": "fleurs-en",
+      "audio_s": 6.66,
+      "segments": 1
+    },
+    "fleurs-en-15842229443202938478": {
+      "category": "fleurs-en",
+      "audio_s": 9.96,
+      "segments": 1
+    },
+    "fleurs-en-16200495359369533302": {
+      "category": "fleurs-en",
+      "audio_s": 7.5,
+      "segments": 1
+    },
+    "fleurs-en-17559567402304106195": {
+      "category": "fleurs-en",
+      "audio_s": 8.64,
+      "segments": 1
+    },
+    "fleurs-en-1774013444539766052": {
+      "category": "fleurs-en",
+      "audio_s": 11.48,
+      "segments": 2
+    },
+    "fleurs-en-18284781272143232129": {
+      "category": "fleurs-en",
+      "audio_s": 7.56,
+      "segments": 1
+    },
+    "fleurs-en-18320871674783850842": {
+      "category": "fleurs-en",
+      "audio_s": 7.02,
+      "segments": 1
+    },
+    "fleurs-en-18359063029191000694": {
+      "category": "fleurs-en",
+      "audio_s": 12.12,
+      "segments": 1
+    },
+    "fleurs-en-1970151869993494628": {
+      "category": "fleurs-en",
+      "audio_s": 12.0,
+      "segments": 1
+    },
+    "fleurs-en-2589557553267364799": {
+      "category": "fleurs-en",
+      "audio_s": 8.94,
+      "segments": 1
+    },
+    "fleurs-en-3083929122891715513": {
+      "category": "fleurs-en",
+      "audio_s": 7.92,
+      "segments": 1
+    },
+    "fleurs-en-3664511950771966320": {
+      "category": "fleurs-en",
+      "audio_s": 8.64,
+      "segments": 1
+    },
+    "fleurs-en-384435163157965470": {
+      "category": "fleurs-en",
+      "audio_s": 5.46,
+      "segments": 1
+    },
+    "fleurs-en-4498640649175127270": {
+      "category": "fleurs-en",
+      "audio_s": 10.56,
+      "segments": 1
+    },
+    "fleurs-en-5198402243598272340": {
+      "category": "fleurs-en",
+      "audio_s": 10.44,
+      "segments": 1
+    },
+    "fleurs-en-5433314566767233828": {
+      "category": "fleurs-en",
+      "audio_s": 6.24,
+      "segments": 1
+    },
+    "fleurs-en-5866078581108668966": {
+      "category": "fleurs-en",
+      "audio_s": 5.62,
+      "segments": 1
+    },
+    "fleurs-en-6080082056978846750": {
+      "category": "fleurs-en",
+      "audio_s": 10.84,
+      "segments": 1
+    },
+    "fleurs-en-6306322369645218273": {
+      "category": "fleurs-en",
+      "audio_s": 6.98,
+      "segments": 1
+    },
+    "fleurs-en-7266355212113564962": {
+      "category": "fleurs-en",
+      "audio_s": 13.14,
+      "segments": 2
+    },
+    "fleurs-en-9817077029864554533": {
+      "category": "fleurs-en",
+      "audio_s": 13.68,
+      "segments": 1
+    }
+  },
+  "model_load_s": 2.05929649,
+  "rss_mb_after_load": 1012.1640625,
+  "rss_mb_peak": 1220.25,
+  "engine_rtf": 0.04511938651839888,
+  "rows": [
+    {
+      "post": "boost 0.25",
+      "category": "ALL",
+      "clips": 25,
+      "wer": 0.25504587155963304,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04553818780282859,
+      "baseline_wer": null
+    },
+    {
+      "post": "boost 0.25+vocab",
+      "category": "ALL",
+      "clips": 25,
+      "wer": 0.25504587155963304,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04553818780282859,
+      "baseline_wer": null
+    },
+    {
+      "post": "boost 0.5",
+      "category": "ALL",
+      "clips": 25,
+      "wer": 0.25504587155963304,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04525728880570955,
+      "baseline_wer": null
+    },
+    {
+      "post": "boost 0.5+vocab",
+      "category": "ALL",
+      "clips": 25,
+      "wer": 0.25504587155963304,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04525728880570955,
+      "baseline_wer": null
+    },
+    {
+      "post": "boost 1",
+      "category": "ALL",
+      "clips": 25,
+      "wer": 0.26055045871559634,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04460198260508969,
+      "baseline_wer": null
+    },
+    {
+      "post": "boost 1+vocab",
+      "category": "ALL",
+      "clips": 25,
+      "wer": 0.26055045871559634,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04460198260508969,
+      "baseline_wer": null
+    },
+    {
+      "post": "raw",
+      "category": "ALL",
+      "clips": 25,
+      "wer": 0.25688073394495414,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04511938651839888,
+      "baseline_wer": null
+    },
+    {
+      "post": "vocab",
+      "category": "ALL",
+      "clips": 25,
+      "wer": 0.25688073394495414,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04511938651839888,
+      "baseline_wer": null
+    },
+    {
+      "post": "boost 0.25",
+      "category": "fleurs-en",
+      "clips": 25,
+      "wer": 0.25504587155963304,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04553818780282859,
+      "baseline_wer": null
+    },
+    {
+      "post": "boost 0.25+vocab",
+      "category": "fleurs-en",
+      "clips": 25,
+      "wer": 0.25504587155963304,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04553818780282859,
+      "baseline_wer": null
+    },
+    {
+      "post": "boost 0.5",
+      "category": "fleurs-en",
+      "clips": 25,
+      "wer": 0.25504587155963304,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04525728880570955,
+      "baseline_wer": null
+    },
+    {
+      "post": "boost 0.5+vocab",
+      "category": "fleurs-en",
+      "clips": 25,
+      "wer": 0.25504587155963304,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04525728880570955,
+      "baseline_wer": null
+    },
+    {
+      "post": "boost 1",
+      "category": "fleurs-en",
+      "clips": 25,
+      "wer": 0.26055045871559634,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04460198260508969,
+      "baseline_wer": null
+    },
+    {
+      "post": "boost 1+vocab",
+      "category": "fleurs-en",
+      "clips": 25,
+      "wer": 0.26055045871559634,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04460198260508969,
+      "baseline_wer": null
+    },
+    {
+      "post": "raw",
+      "category": "fleurs-en",
+      "clips": 25,
+      "wer": 0.25688073394495414,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04511938651839888,
+      "baseline_wer": null
+    },
+    {
+      "post": "vocab",
+      "category": "fleurs-en",
+      "clips": 25,
+      "wer": 0.25688073394495414,
+      "term_recall": null,
+      "term_exact": null,
+      "term_insertions": 0,
+      "rtf": 0.04511938651839888,
+      "baseline_wer": null
+    }
+  ],
+  "warnings": [
+    "include not found (skipped): /home/ubuntu/tyst-eval/clips/synth/manifest.toml",
+    "clip sv-01: audio or reference missing (skipped)",
+    "clip sv-02: audio or reference missing (skipped)",
+    "clip sv-03: audio or reference missing (skipped)",
+    "clip sv-04: audio or reference missing (skipped)",
+    "clip sv-05: audio or reference missing (skipped)",
+    "clip en-01: audio or reference missing (skipped)",
+    "clip en-02: audio or reference missing (skipped)",
+    "clip en-03: audio or reference missing (skipped)",
+    "clip en-04: audio or reference missing (skipped)",
+    "clip en-05: audio or reference missing (skipped)",
+    "clip mixed-01: audio or reference missing (skipped)",
+    "clip mixed-02: audio or reference missing (skipped)",
+    "clip mixed-03: audio or reference missing (skipped)",
+    "clip mixed-04: audio or reference missing (skipped)",
+    "clip mixed-05: audio or reference missing (skipped)",
+    "clip sv-terms-01: audio or reference missing (skipped)",
+    "clip sv-terms-02: audio or reference missing (skipped)",
+    "clip sv-terms-03: audio or reference missing (skipped)",
+    "clip sv-terms-04: audio or reference missing (skipped)",
+    "clip sv-terms-05: audio or reference missing (skipped)"
+  ]
+}

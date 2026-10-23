@@ -103,6 +103,10 @@ pub struct PipelineConfig {
     pub min_partial_interval: Duration,
     /// The gap also grows to this fraction of the buffer length.
     pub partial_growth: f32,
+    /// When false, [`EngineRole::English`] gets no boost tree. Defaults to
+    /// [`crate::vocabulary::BOOST_ENGLISH`]. `tyst-cli bench --boost` sets this true so the
+    /// English gate can still be measured after the product default turns English off.
+    pub boost_english: bool,
 }
 
 impl Default for PipelineConfig {
@@ -112,6 +116,7 @@ impl Default for PipelineConfig {
             partials: true,
             min_partial_interval: Duration::from_millis(800),
             partial_growth: 0.5,
+            boost_english: crate::vocabulary::BOOST_ENGLISH,
         }
     }
 }
@@ -311,10 +316,13 @@ impl<D: SpeechDetector> ChannelPipeline<D> {
         samples: &[f32],
         end_sample: u64,
     ) -> Result<(AsrResult, String, DecodeStats)> {
-        // Both engines take the same boost: Parakeet v3 ships Pianissimo's `vocab.txt`, so the
-        // tokenizer's IDs fit it too.
+        // Parakeet v3 ships Pianissimo's `vocab.txt`, so the tokenizer's IDs fit English too.
+        // Issue #38: pass no tree for forced English when [`PipelineConfig::boost_english`] is off.
         let vocabulary = self.vocabulary.clone();
-        let boost = vocabulary.boost();
+        let boost = match role {
+            EngineRole::English if !self.cfg.boost_english => None,
+            _ => vocabulary.boost(),
+        };
         let mut engines = self.engines.lock().map_err(|_| Error::Model("engine lock poisoned".into()))?;
         let engine = engines.engine(role)?;
         let t0 = Instant::now();
@@ -469,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn boosts_both_engines() {
+    fn boosts_primary_engine() {
         let calls = Arc::new(Mutex::new(vec![]));
         let mut p = pipeline(false, calls);
         let boost = PhraseBoost { tree: BoostTree::new(&[vec![1, 2]], 1.0, 2.0), alpha: 1.0 };
@@ -480,7 +488,37 @@ mod tests {
             e => panic!("unexpected {e:?}"),
         };
         assert!(text(&run(&mut p, &speech)).ends_with("boosted=true"));
-        p.router_mut().set_mode(LanguageMode::English);
+    }
+
+    #[test]
+    fn english_skips_boost_when_config_disables_it() {
+        let calls = Arc::new(Mutex::new(vec![]));
+        let mut p = pipeline(false, calls);
+        p.cfg.boost_english = false;
+        let boost = PhraseBoost { tree: BoostTree::new(&[vec![1, 2]], 1.0, 2.0), alpha: 1.0 };
+        p.vocabulary = Arc::new((*p.vocabulary).clone().with_phrase_boost(boost));
+        let speech = [tone(0.5, false), tone(2.0, true), tone(1.0, false)].concat();
+        let text = |events: &[PipelineEvent]| match &events[0] {
+            PipelineEvent::Final { segment, .. } => segment.text.clone(),
+            e => panic!("unexpected {e:?}"),
+        };
         assert!(text(&run(&mut p, &speech)).ends_with("boosted=true"));
+        p.router_mut().set_mode(LanguageMode::English);
+        assert!(text(&run(&mut p, &speech)).ends_with("boosted=false"));
+    }
+
+    #[test]
+    fn english_boosts_when_config_enables_it() {
+        let calls = Arc::new(Mutex::new(vec![]));
+        let mut p = pipeline(false, calls);
+        p.cfg.boost_english = true;
+        let boost = PhraseBoost { tree: BoostTree::new(&[vec![1, 2]], 1.0, 2.0), alpha: 1.0 };
+        p.vocabulary = Arc::new((*p.vocabulary).clone().with_phrase_boost(boost));
+        let speech = [tone(0.5, false), tone(2.0, true), tone(1.0, false)].concat();
+        p.router_mut().set_mode(LanguageMode::English);
+        match &run(&mut p, &speech)[0] {
+            PipelineEvent::Final { segment, .. } => assert!(segment.text.ends_with("boosted=true")),
+            e => panic!("unexpected {e:?}"),
+        }
     }
 }
