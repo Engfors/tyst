@@ -67,3 +67,9 @@ the tokenizer one needs `TYST_TOKENIZER=<tokenizer.model>` and `--ignored`. Eval
 On Linux, building the `mic` feature needs ALSA headers and `pipewire` needs PipeWire headers plus clang;
 the app also needs webkit2gtk-4.1 and libayatana-appindicator (see `.github/workflows/ci.yml`).
 `--no-default-features` builds the CLI without audio capture.
+
+## Cursor Cloud specific instructions
+
+- Run `npm run --prefix app/ui build` before `cargo test --workspace` or `cargo clippy --workspace`. The Tauri app compiles against `app/ui/dist`.
+- `cargo build -p tyst-app` is a dev build: the window loads `http://localhost:5173` (`devUrl` in `app/src-tauri/tauri.conf.json`). Start Vite with `npm run dev` in `app/ui`, or use `npm run tauri dev` from `app/ui`, which starts both. `npm run tauri build` embeds the UI instead.
+- Nothing has to keep running for tests. `tyst-cli echo-cancel` and, after `tyst-cli models fetch`, `tyst-cli transcribe` exercise the pipeline. Model tests stay `#[ignore]`d until `TYST_MODELS` points at a fetched directory.
