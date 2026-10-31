@@ -3,10 +3,10 @@
 //!
 //! The meeting window must never take keyboard focus from the meeting app (SPEC 8.1). It is
 //! created unfocused and non-focusable, always on top, without decorations or a taskbar entry;
-//! it only becomes focusable while the "Name this meeting" field waits for typing. On KDE
-//! Wayland, where clients cannot keep themselves on top or position themselves, a KWin rule keeps
-//! it on top ([`crate::kwin`]) and a KWin script reads its position when it hides and restores it
-//! when it shows ([`crate::desktop`]).
+//! it only becomes focusable while the "Name this meeting" field waits for typing. On KDE and
+//! Hyprland, where clients cannot keep themselves on top or position themselves, a window rule
+//! keeps it on top ([`crate::kwin`], [`crate::hyprland`]) and the compositor reports its position
+//! when it hides and restores it when it shows ([`crate::desktop`]).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -19,7 +19,7 @@ pub const MEETING: &str = "meeting";
 pub const PILL: &str = "pill";
 pub const SETTINGS: &str = "settings";
 pub const ONBOARDING: &str = "onboarding";
-/// Window titles; the KWin rules and scripts match them.
+/// Window titles; the KWin and Hyprland rules match them.
 pub const MEETING_TITLE: &str = "Tyst Meeting";
 pub const PILL_TITLE: &str = "Tyst Dictation";
 /// The pill window: wide enough for two lines of live text, tall enough for four lines of
@@ -101,11 +101,9 @@ pub fn show_meeting(app: &AppHandle) {
             let _ = w.show();
             MEETING_SHOWN.store(true, Ordering::Release);
             crate::tray::refresh(app);
-            // KDE Wayland: KWin places new windows itself; put it back where the user left it.
+            // KDE and Hyprland place new windows themselves; put it back where the user left it.
             #[cfg(target_os = "linux")]
-            if let Some(pos) = app.state::<AppState>().config().meetings.kwin_position
-                && tyst_platform::kwin::is_kde()
-            {
+            if let Some(pos) = crate::desktop::stored_meeting_origin(&app.state::<AppState>().config().meetings) {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     app.state::<crate::desktop::Desktop>().restore_meeting_position(pos).await;
@@ -119,9 +117,9 @@ pub fn show_meeting(app: &AppHandle) {
 pub fn hide_meeting(app: &AppHandle) {
     MEETING_SHOWN.store(false, Ordering::Release);
     crate::tray::refresh(app);
-    // KDE Wayland: ask KWin where the window is before it disappears.
+    // KDE and Hyprland: ask the compositor where the window is before it disappears.
     #[cfg(target_os = "linux")]
-    if tyst_platform::kwin::is_kde() && app.get_webview_window(MEETING).is_some() {
+    if crate::desktop::compositor_manages_windows() && app.get_webview_window(MEETING).is_some() {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
             app.state::<crate::desktop::Desktop>().remember_meeting_position(&app).await;
@@ -162,6 +160,15 @@ pub fn focus_for_typing(app: &AppHandle, on: bool) {
     let _ = w.set_focusable(on);
     if on {
         let _ = w.set_focus();
+        // Hyprland's no_initial_focus rule does not block a later, explicit focus. The client's
+        // activate request is not enough on its own when the compositor ignores it.
+        #[cfg(target_os = "linux")]
+        if tyst_platform::hyprland::is_hyprland() {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                app.state::<crate::desktop::Desktop>().focus_meeting_window().await;
+            });
+        }
     }
 }
 
@@ -255,7 +262,7 @@ pub fn prepare_pill(app: &AppHandle) {
 
 /// Shows the pill. With `focus` it takes the keyboard (Esc, Tab, Enter, editing) until it hides;
 /// the window the user was in gets it back when the pill hides or pastes. Placement at the
-/// bottom centre of the active screen is done by the caller on KDE ([`crate::desktop`]).
+/// bottom centre of the focused screen is done by the caller on KDE and Hyprland ([`crate::desktop`]).
 pub fn show_pill(app: &AppHandle, focus: bool) -> Option<WebviewWindow> {
     let w = match pill_window(app) {
         Ok(w) => w,

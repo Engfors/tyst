@@ -109,6 +109,38 @@ Models are not bundled.
 The release DMG is ad-hoc signed (there is no Developer ID yet), so macOS asks before the first
 start: right-click Tyst.app, choose Open, and confirm. It needs macOS 14.4 or newer for system audio.
 
+### Omarchy (Hyprland)
+
+Tyst talks to Hyprland over its IPC socket (the same data as `hyprctl activewindow`) for the
+active window, paste-back, the dictation pill and the meeting window's position. Window rules
+use the syntax Hyprland **0.53** introduced (`windowrule` with `match:title`, `float = on`,
+`pin = on`, `no_initial_focus = on`, `border_size = 0`). Older `windowrulev2` / `nofocus` /
+`noborder` lines are not written.
+
+Tyst writes `~/.config/tyst/hyprland.conf` (`$XDG_CONFIG_HOME/tyst/hyprland.conf` when that is
+set) and reloads Hyprland. It does not edit your Hyprland config. Add this line to the config
+you already edit, reload Hyprland, and restart Tyst so the windows map under the rules:
+
+```
+source = ~/.config/tyst/hyprland.conf
+```
+
+`no_initial_focus` keeps a newly shown window from taking the keyboard. The "Name this meeting"
+field can still be focused. The pill is placed at the bottom centre of the focused monitor.
+
+Paste uses `wtype` (Ctrl+V, Ctrl+Shift+V in a terminal), which Omarchy ships. `ydotool` is the
+fallback. The previous clipboard text is restored the same way as on KDE. Shortcuts use the
+GlobalShortcuts portal. If that does not bind a key, add:
+
+```
+bind = CTRL, aring, exec, tyst --dictate
+bind = CTRL SHIFT, aring, exec, tyst --toggle-meeting
+```
+
+Use the real path to the binary when `tyst` is not on `PATH`. The tray icon is a
+StatusNotifierItem; Waybar's tray module (top right on Omarchy) shows it. The AppImage needs
+FUSE 3: `sudo pacman -S fuse3`.
+
 ### Troubleshooting (Linux)
 
 - **Blank, flickering or crashing windows on NVIDIA.** Tyst already turns off WebKitGTK's DMA-BUF

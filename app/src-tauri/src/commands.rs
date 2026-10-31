@@ -158,6 +158,10 @@ pub struct ConfigView {
     pub app_filter_supported: bool,
     pub version: String,
     pub platform: &'static str,
+    /// `kde`, `hyprland` or `other`. The window-rule and paste hints follow it.
+    pub compositor: &'static str,
+    /// Hyprland binds to add when the shortcut portal does not bind a key.
+    pub hyprland_binds: Option<&'static str>,
 }
 
 #[tauri::command]
@@ -175,7 +179,22 @@ pub fn config_get(app: AppHandle) -> ConfigView {
         app_filter_supported: crate::sources::FILTERS_APPS,
         version: env!("CARGO_PKG_VERSION").into(),
         platform: std::env::consts::OS,
+        compositor: session().0,
+        hyprland_binds: session().1,
     }
+}
+
+fn session() -> (&'static str, Option<&'static str>) {
+    #[cfg(target_os = "linux")]
+    {
+        if tyst_platform::kwin::is_kde() {
+            return ("kde", None);
+        }
+        if tyst_platform::hyprland::is_hyprland() {
+            return ("hyprland", Some(crate::hyprland::BIND_HINT));
+        }
+    }
+    ("other", None)
 }
 
 /// Saves settings and applies what changed (launch at login, models).
@@ -189,10 +208,12 @@ pub fn config_set(app: AppHandle, config: Config) -> CmdResult {
     if config.threads != old.threads || config.models_dir != old.models_dir {
         st.unload_runtime();
     }
-    // Window geometry, the paste consent token and the last dictation language are owned by
-    // the app, not the settings form.
+    // Window geometry, compositor positions, the paste consent token and the last dictation
+    // language are owned by the app, not the settings form.
     let mut config = config;
     config.meetings.window = old.meetings.window.clone();
+    config.meetings.kwin_position = old.meetings.kwin_position;
+    config.meetings.hypr_position = old.meetings.hypr_position;
     config.dictation.keyboard_token = old.dictation.keyboard_token.clone();
     config.dictation.keyboard_access = old.dictation.keyboard_access;
     config.updates.github_token = old.updates.github_token;
@@ -675,7 +696,10 @@ pub fn updates_open_release(app: AppHandle) -> CmdResult {
 #[tauri::command]
 pub fn install_window_rule() -> CmdResult {
     #[cfg(target_os = "linux")]
-    return crate::kwin::install_rule();
+    {
+        crate::kwin::install_rule()?;
+        return crate::hyprland::install_rule();
+    }
     #[allow(unreachable_code)]
     Ok(())
 }

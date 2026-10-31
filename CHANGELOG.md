@@ -6,6 +6,9 @@ for a version is the text of its GitHub release and of the update notice in Sett
 ## Unreleased
 
 Features
+- Omarchy / Hyprland: window rules (Hyprland 0.53 syntax, a file the user sources), IPC for the
+  active window, paste-back, dictation pill and meeting-window position, and paste through
+  `wtype` with `ydotool` as the fallback. The tray stays the existing StatusNotifierItem.
 - Custom vocabulary now helps recognition, not only spelling: terms, and replacements that join
   words (`terra form → Terraform`), make the model more likely to hear them as written. Swedish
   (and auto) keep phrase boosting on by default; forced English (Parakeet) does not, after the

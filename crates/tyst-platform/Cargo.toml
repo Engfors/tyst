@@ -14,9 +14,10 @@ mic = ["dep:cpal"]
 # Needs libpipewire-0.3 headers and clang to build (Arch: pipewire, clang; Debian: libpipewire-0.3-dev).
 pipewire = ["dep:pipewire"]
 # Desktop integration for dictation: clipboard everywhere; on Linux the XDG portals (global
-# shortcuts, keyboard input) and KWin scripting over D-Bus; on macOS app activation and CGEvent paste.
+# shortcuts, keyboard input), KWin scripting over D-Bus and Hyprland IPC; on macOS app activation
+# and CGEvent paste.
 desktop = [
-    "dep:arboard", "dep:ashpd", "dep:zbus", "dep:futures-util", "dep:tokio", "dep:serde_json",
+    "dep:arboard", "dep:ashpd", "dep:zbus", "dep:futures-util", "dep:tokio", "dep:serde", "dep:serde_json",
     "dep:objc2", "dep:objc2-foundation", "dep:objc2-app-kit", "dep:objc2-core-graphics",
 ]
 # macOS: system audio through a Core Audio process tap (macOS 14.4+).
@@ -38,6 +39,7 @@ ashpd = { version = "0.13", optional = true, default-features = false, features 
 zbus = { version = "5", optional = true, default-features = false, features = ["tokio"] }
 futures-util = { version = "0.3", optional = true, default-features = false }
 tokio = { version = "1", optional = true, features = ["sync", "time", "macros"] }
+serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

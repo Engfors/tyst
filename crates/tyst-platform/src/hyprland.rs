@@ -1,0 +1,526 @@
+//! Hyprland IPC (Omarchy and other Hyprland sessions): the active window (to paste back into
+//! it and to spot terminals), focusing it again, placing the dictation pill at the bottom centre
+//! of the focused monitor, and reading and restoring the meeting window's position.
+//!
+//! Wayland clients cannot do this themselves. The socket is the one `hyprctl` uses
+//! (`$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket.sock`). Commands are the same
+//! strings `hyprctl` writes; replies are read back and the connection closes. Window titles are
+//! matched locally and then dropped: they are never logged and never sent back to Hyprland.
+//!
+//! Coordinates are Hyprland's global layout space, the same space as a client's `at` field and
+//! as `movewindowpixel exact`. Monitor `width` / `height` from `hyprctl monitors` are the mode
+//! in physical pixels; `x`, `y`, window `at` / `size` and reserved zones are logical pixels
+//! (physical size divided by `scale`).
+
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use serde::Deserialize;
+
+use crate::DesktopError;
+
+const TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_REPLY: usize = 2 * 1024 * 1024;
+
+/// A window Hyprland can focus, addressed by the hex id `hyprctl` prints (`0x…`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowRef {
+    /// Hyprland address, `0x` plus hex digits. Stable while the window exists.
+    pub id: String,
+    /// Wayland app id, or the X11 class. The same string KWin calls a resource class.
+    pub class: String,
+}
+
+/// A mapped window's address, class, position and size. The title is not kept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MappedWindow {
+    pub id: String,
+    pub class: String,
+    pub at: (i32, i32),
+    pub size: (i32, i32),
+    floating: bool,
+}
+
+/// One monitor, in the layout `hyprctl monitors -j` reports.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Monitor {
+    pub x: i32,
+    pub y: i32,
+    /// Mode width in physical pixels.
+    pub width: i32,
+    /// Mode height in physical pixels.
+    pub height: i32,
+    pub scale: f64,
+    pub focused: bool,
+    /// Exclusive zones from layer-shell bars: top, bottom, left, right, in logical pixels.
+    pub reserved: [i32; 4],
+}
+
+impl Monitor {
+    /// Size of the monitor in the global layout (logical pixels).
+    pub fn logical_size(&self) -> (i32, i32) {
+        (logical_len(self.width, self.scale), logical_len(self.height, self.scale))
+    }
+
+    pub fn contains_point(&self, x: i32, y: i32) -> bool {
+        let (w, h) = self.logical_size();
+        x >= self.x && y >= self.y && x < self.x.saturating_add(w) && y < self.y.saturating_add(h)
+    }
+}
+
+/// True when this session is Hyprland and not KDE (a `KDE` desktop wins if both are set).
+/// `xdg` is `XDG_CURRENT_DESKTOP`; an empty value counts as unset, and then a non-empty
+/// `HYPRLAND_INSTANCE_SIGNATURE` is enough.
+pub fn detect_hyprland(kde: bool, xdg: Option<&str>, signature: Option<&str>) -> bool {
+    if kde {
+        return false;
+    }
+    match xdg.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(d) => d.split(':').any(|p| p.eq_ignore_ascii_case("Hyprland")),
+        None => signature.is_some_and(|s| !s.trim().is_empty()),
+    }
+}
+
+/// True on a Hyprland session (Omarchy sets `XDG_CURRENT_DESKTOP=Hyprland`).
+pub fn is_hyprland() -> bool {
+    let xdg = std::env::var("XDG_CURRENT_DESKTOP").ok();
+    let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok();
+    detect_hyprland(crate::kwin::is_kde(), xdg.as_deref(), sig.as_deref())
+}
+
+/// `0x` plus hex, not the null address `0x0` Hyprland uses for "no window".
+pub fn is_window_address(id: &str) -> bool {
+    let Some(hex) = id.strip_prefix("0x") else { return false };
+    !hex.is_empty() && hex.len() <= 16 && hex.chars().all(|c| c.is_ascii_hexdigit()) && hex.chars().any(|c| c != '0')
+}
+
+pub struct Hyprland {
+    socket: PathBuf,
+}
+
+impl Hyprland {
+    /// Connects if the instance socket exists.
+    pub fn connect() -> Result<Self, DesktopError> {
+        let socket = socket_path()?;
+        if !socket.exists() {
+            return Err(DesktopError::Hyprland(format!("no socket at {}", socket.display())));
+        }
+        Ok(Self { socket })
+    }
+
+    /// The focused window, if there is one.
+    pub fn active_window(&self) -> Result<Option<WindowRef>, DesktopError> {
+        parse_active_window(&self.command("j/activewindow")?)
+    }
+
+    /// Focuses the window with this address. False if that address is not mapped.
+    pub fn activate(&self, id: &str) -> Result<bool, DesktopError> {
+        if !is_window_address(id) {
+            return Ok(false);
+        }
+        let clients = parse_clients(&self.command("j/clients")?)?;
+        if !clients.iter().any(|c| c.address == id) {
+            return Ok(false);
+        }
+        self.focus_address(id)?;
+        Ok(true)
+    }
+
+    /// Focuses the window whose title is exactly `title`. False if it is not mapped.
+    pub fn focus_title(&self, title: &str) -> Result<bool, DesktopError> {
+        let Some(window) = self.window_by_title(title)? else { return Ok(false) };
+        self.focus_address(&window.id)?;
+        Ok(true)
+    }
+
+    /// Moves the window titled `title` to the bottom centre of the focused monitor, `bottom`
+    /// logical pixels above the work area's lower edge, and optionally gives it the keyboard.
+    /// False if no such window is mapped yet (the caller retries while it maps).
+    pub fn place_bottom_center(&self, title: &str, bottom: i32, focus: bool) -> Result<bool, DesktopError> {
+        let Some(window) = self.window_by_title(title)? else { return Ok(false) };
+        if window.size.0 <= 0 || window.size.1 <= 0 {
+            return Ok(false);
+        }
+        let monitors = self.monitors()?;
+        let Some(monitor) = focused_monitor(&monitors) else { return Ok(false) };
+        let (x, y) = pill_top_left(monitor, window.size, bottom);
+        self.move_window(&window, x, y)?;
+        if focus {
+            self.focus_address(&window.id)?;
+        }
+        Ok(true)
+    }
+
+    /// Top-left of the window titled `title`, in global logical pixels, or `None` if it is not
+    /// mapped. (A Wayland client cannot read its own position.)
+    pub fn position(&self, title: &str) -> Result<Option<(i32, i32)>, DesktopError> {
+        Ok(self.window_by_title(title)?.map(|w| w.at))
+    }
+
+    /// Moves the window titled `title` so its top-left is `(x, y)`. The move is skipped when
+    /// that point is on no monitor (a display that was unplugged). False if the window is not
+    /// mapped yet.
+    pub fn move_to(&self, title: &str, x: i32, y: i32) -> Result<bool, DesktopError> {
+        let Some(window) = self.window_by_title(title)? else { return Ok(false) };
+        if !on_a_monitor(&self.monitors()?, x, y) {
+            log::info!("saved meeting position is not on a monitor; leaving the window");
+            return Ok(true);
+        }
+        self.move_window(&window, x, y)?;
+        Ok(true)
+    }
+
+    /// Asks Hyprland to reread its config, so a rules file it already `source`s is picked up.
+    pub fn reload(&self) -> Result<(), DesktopError> {
+        let reply = self.command("reload")?;
+        let line = reply.lines().next().unwrap_or("").trim();
+        if line.is_empty() || line == "ok" { Ok(()) } else { Err(DesktopError::Hyprland(brief(line).to_string())) }
+    }
+
+    fn window_by_title(&self, title: &str) -> Result<Option<MappedWindow>, DesktopError> {
+        window_by_title(&self.command("j/clients")?, title)
+    }
+
+    fn monitors(&self) -> Result<Vec<Monitor>, DesktopError> {
+        parse_monitors(&self.command("j/monitors")?)
+    }
+
+    fn move_window(&self, window: &MappedWindow, x: i32, y: i32) -> Result<(), DesktopError> {
+        // A tiled window ignores `movewindowpixel`. Float first when the rules have not
+        // (a sourced rules file floats it on map; this covers the run before that).
+        if !window.floating {
+            self.dispatch(&format!("setfloating address:{}", window.id))?;
+        }
+        self.dispatch(&format!("movewindowpixel exact {x} {y},address:{}", window.id))?;
+        Ok(())
+    }
+
+    fn focus_address(&self, id: &str) -> Result<(), DesktopError> {
+        self.dispatch(&format!("focuswindow address:{id}"))
+    }
+
+    fn dispatch(&self, args: &str) -> Result<(), DesktopError> {
+        let reply = self.command(&format!("dispatch {args}"))?;
+        let line = reply.lines().next().unwrap_or("").trim();
+        if line.is_empty() || line == "ok" {
+            Ok(())
+        } else {
+            Err(DesktopError::Hyprland(format!("dispatch failed: {}", brief(line))))
+        }
+    }
+
+    /// Writes one command and reads the reply. The request is a fixed command or an address
+    /// and integers checked by [`is_window_address`]; it never contains a window title.
+    fn command(&self, request: &str) -> Result<String, DesktopError> {
+        use std::io::{Read, Write};
+        use std::net::Shutdown;
+        use std::os::unix::net::UnixStream;
+        let mut stream =
+            UnixStream::connect(&self.socket).map_err(|e| DesktopError::Hyprland(format!("socket: {e}")))?;
+        let _ = stream.set_read_timeout(Some(TIMEOUT));
+        let _ = stream.set_write_timeout(Some(TIMEOUT));
+        stream.write_all(request.as_bytes()).map_err(|e| DesktopError::Hyprland(format!("socket write: {e}")))?;
+        let _ = stream.shutdown(Shutdown::Write);
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 8192];
+        loop {
+            match stream.read(&mut tmp) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if buf.len().saturating_add(n) > MAX_REPLY {
+                        return Err(DesktopError::Hyprland("reply is too large".into()));
+                    }
+                    buf.extend_from_slice(&tmp[..n]);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if buf.is_empty() {
+                        return Err(DesktopError::Hyprland("no answer from the socket".into()));
+                    }
+                    // The reply arrived and the server left the socket open.
+                    break;
+                }
+                Err(e) => return Err(DesktopError::Hyprland(format!("socket read: {e}"))),
+            }
+        }
+        String::from_utf8(buf).map_err(|_| DesktopError::Hyprland("reply was not utf-8".into()))
+    }
+}
+
+fn socket_path() -> Result<PathBuf, DesktopError> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|d| d.is_absolute())
+        .ok_or_else(|| DesktopError::Hyprland("XDG_RUNTIME_DIR is not an absolute path".into()))?;
+    let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
+        .map_err(|_| DesktopError::Hyprland("HYPRLAND_INSTANCE_SIGNATURE is not set".into()))?;
+    socket_path_from(&runtime, &sig)
+}
+
+fn socket_path_from(runtime_dir: &Path, signature: &str) -> Result<PathBuf, DesktopError> {
+    if !runtime_dir.is_absolute() {
+        return Err(DesktopError::Hyprland("runtime dir is not absolute".into()));
+    }
+    if !signature_ok(signature) {
+        return Err(DesktopError::Hyprland("HYPRLAND_INSTANCE_SIGNATURE is not a single path segment".into()));
+    }
+    Ok(runtime_dir.join("hypr").join(signature).join(".socket.sock"))
+}
+
+fn signature_ok(signature: &str) -> bool {
+    !signature.is_empty()
+        && signature.len() < 128
+        && signature.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn logical_len(px: i32, scale: f64) -> i32 {
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    (px as f64 / scale).round() as i32
+}
+
+/// Top-left of a window of `window` size, centred on `monitor`'s work area, `margin_bottom`
+/// logical pixels above the bottom of that area (above a bottom bar and the Dock gap).
+/// A top bar is both added to the work-area origin and subtracted from its height, so it does
+/// not move this bottom edge. Waybar on Omarchy sits at the top.
+pub fn pill_top_left(monitor: &Monitor, window: (i32, i32), margin_bottom: i32) -> (i32, i32) {
+    let (logical_w, logical_h) = monitor.logical_size();
+    let bottom = monitor.reserved[1].max(0);
+    let left = monitor.reserved[2].max(0);
+    let right = monitor.reserved[3].max(0);
+    let span = logical_w.saturating_sub(left).saturating_sub(right);
+    let x = monitor.x.saturating_add(left) + (span - window.0) / 2;
+    let bottom_edge = monitor.y.saturating_add(logical_h).saturating_sub(bottom);
+    let y = bottom_edge - window.1 - margin_bottom;
+    (x, y)
+}
+
+pub fn focused_monitor(monitors: &[Monitor]) -> Option<&Monitor> {
+    monitors.iter().find(|m| m.focused).or_else(|| monitors.first())
+}
+
+pub fn on_a_monitor(monitors: &[Monitor], x: i32, y: i32) -> bool {
+    monitors.iter().any(|m| m.contains_point(x, y))
+}
+
+pub fn parse_active_window(body: &str) -> Result<Option<WindowRef>, DesktopError> {
+    let body = body.trim();
+    if body.is_empty() || body.eq_ignore_ascii_case("invalid") || body == "{}" {
+        return Ok(None);
+    }
+    if !body.starts_with('{') {
+        return Err(DesktopError::Hyprland("unexpected activewindow reply".into()));
+    }
+    let client: RawClient =
+        serde_json::from_str(body).map_err(|_| DesktopError::Hyprland("could not parse the active window".into()))?;
+    Ok(window_ref(&client))
+}
+
+pub fn window_by_title(body: &str, title: &str) -> Result<Option<MappedWindow>, DesktopError> {
+    Ok(parse_clients(body)?.into_iter().find(|c| c.title == title).and_then(|c| mapped(&c)))
+}
+
+fn parse_clients(body: &str) -> Result<Vec<RawClient>, DesktopError> {
+    let body = body.trim();
+    if !body.starts_with('[') {
+        return Err(DesktopError::Hyprland("unexpected clients reply".into()));
+    }
+    serde_json::from_str(body).map_err(|_| DesktopError::Hyprland("could not parse the window list".into()))
+}
+
+pub fn parse_monitors(body: &str) -> Result<Vec<Monitor>, DesktopError> {
+    let body = body.trim();
+    if !body.starts_with('[') {
+        return Err(DesktopError::Hyprland("unexpected monitors reply".into()));
+    }
+    let raw: Vec<RawMonitor> =
+        serde_json::from_str(body).map_err(|_| DesktopError::Hyprland("could not parse the monitor list".into()))?;
+    Ok(raw.into_iter().map(Monitor::from).collect())
+}
+
+fn window_ref(client: &RawClient) -> Option<WindowRef> {
+    if !is_window_address(&client.address) {
+        return None;
+    }
+    Some(WindowRef { id: client.address.clone(), class: client.class.clone() })
+}
+
+fn mapped(client: &RawClient) -> Option<MappedWindow> {
+    let id = window_ref(client)?;
+    Some(MappedWindow {
+        id: id.id,
+        class: id.class,
+        at: pair(&client.at),
+        size: pair(&client.size),
+        floating: client.floating,
+    })
+}
+
+fn pair(v: &[f64]) -> (i32, i32) {
+    let n = |i: usize| v.get(i).copied().unwrap_or(0.0).round() as i32;
+    (n(0), n(1))
+}
+
+fn brief(line: &str) -> &str {
+    let mut end = 200.min(line.len());
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    &line[..end]
+}
+
+#[derive(Deserialize)]
+struct RawClient {
+    #[serde(default)]
+    address: String,
+    #[serde(default)]
+    class: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    at: Vec<f64>,
+    #[serde(default)]
+    size: Vec<f64>,
+    #[serde(default)]
+    floating: bool,
+}
+
+#[derive(Deserialize)]
+struct RawMonitor {
+    #[serde(default)]
+    x: i32,
+    #[serde(default)]
+    y: i32,
+    #[serde(default)]
+    width: i32,
+    #[serde(default)]
+    height: i32,
+    #[serde(default = "one")]
+    scale: f64,
+    #[serde(default)]
+    focused: bool,
+    #[serde(default)]
+    reserved: Vec<i32>,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+impl From<RawMonitor> for Monitor {
+    fn from(raw: RawMonitor) -> Self {
+        let mut reserved = [0; 4];
+        for (i, v) in raw.reserved.into_iter().take(4).enumerate() {
+            reserved[i] = v;
+        }
+        Self {
+            x: raw.x,
+            y: raw.y,
+            width: raw.width,
+            height: raw.height,
+            scale: raw.scale,
+            focused: raw.focused,
+            reserved,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_detection_follows_the_desktop_name() {
+        assert!(detect_hyprland(false, Some("Hyprland"), None));
+        assert!(detect_hyprland(false, Some("ubuntu:Hyprland"), None));
+        assert!(detect_hyprland(false, None, Some("abc123")));
+        assert!(detect_hyprland(false, Some(""), Some("abc123")));
+        assert!(!detect_hyprland(false, Some("KDE"), Some("abc123")));
+        assert!(!detect_hyprland(false, Some("GNOME"), None));
+        assert!(!detect_hyprland(true, Some("Hyprland"), Some("abc123")));
+        assert!(!detect_hyprland(false, None, None));
+        assert!(!detect_hyprland(false, None, Some("  ")));
+    }
+
+    #[test]
+    fn addresses_are_hex_and_not_null() {
+        assert!(is_window_address("0x558b0a0c5c40"));
+        assert!(is_window_address("0xabc"));
+        assert!(!is_window_address("0x0"));
+        assert!(!is_window_address("0x000"));
+        assert!(!is_window_address("558b0a0c5c40"));
+        assert!(!is_window_address("0x12/34"));
+        assert!(!is_window_address("0x12\n34"));
+    }
+
+    #[test]
+    fn socket_path_stays_inside_the_instance_dir() {
+        let ok = socket_path_from(Path::new("/run/user/1000"), "abc_123").unwrap();
+        assert_eq!(ok, PathBuf::from("/run/user/1000/hypr/abc_123/.socket.sock"));
+        assert!(socket_path_from(Path::new("/run/user/1000"), "../etc").is_err());
+        assert!(socket_path_from(Path::new("/run/user/1000"), "a/b").is_err());
+        assert!(socket_path_from(Path::new("/run/user/1000"), "").is_err());
+        assert!(socket_path_from(Path::new("relative"), "abc").is_err());
+    }
+
+    #[test]
+    fn active_window_keeps_the_address_and_drops_the_title() {
+        let body = r#"{"address":"0x558b0a0c5c40","class":"kitty","title":"user typed this","at":[1,2],"size":[3,4]}"#;
+        let w = parse_active_window(body).unwrap().unwrap();
+        assert_eq!(w.id, "0x558b0a0c5c40");
+        assert_eq!(w.class, "kitty");
+        assert!(!format!("{w:?}").contains("user typed"));
+        assert!(parse_active_window("{}").unwrap().is_none());
+        assert!(parse_active_window(r#"{"address":"0x0","class":"kitty","title":"x"}"#).unwrap().is_none());
+        let err = parse_active_window("not json, title stays here").unwrap_err();
+        assert!(!err.to_string().contains("title stays"));
+    }
+
+    #[test]
+    fn title_match_returns_geometry_without_the_title() {
+        let body = r#"[
+            {"address":"0x11","class":"kitty","title":"zsh","at":[0,0],"size":[80,24],"floating":false},
+            {"address":"0x22","class":"com.engfors.tyst","title":"Tyst Dictation","at":[10,20],"size":[560,168],"floating":true}
+        ]"#;
+        let w = window_by_title(body, "Tyst Dictation").unwrap().unwrap();
+        assert_eq!(w.id, "0x22");
+        assert_eq!(w.class, "com.engfors.tyst");
+        assert_eq!(w.at, (10, 20));
+        assert_eq!(w.size, (560, 168));
+        assert!(w.floating);
+        assert!(!format!("{w:?}").contains("Tyst Dictation"));
+        assert!(window_by_title(body, "missing").unwrap().is_none());
+    }
+
+    fn monitor(x: i32, y: i32, width: i32, height: i32, scale: f64, reserved: [i32; 4], focused: bool) -> Monitor {
+        Monitor { x, y, width, height, scale, focused, reserved }
+    }
+
+    #[test]
+    fn pill_sits_bottom_centre_of_the_focused_monitor() {
+        let primary = monitor(0, 0, 1920, 1080, 1.0, [30, 0, 0, 0], true);
+        // A top bar does not move the bottom edge. 560×168 window, 48 px gap.
+        assert_eq!(pill_top_left(&primary, (560, 168), 48), (680, 864));
+        let with_bottom_bar = monitor(0, 0, 1920, 1080, 1.0, [0, 40, 0, 0], true);
+        assert_eq!(pill_top_left(&with_bottom_bar, (560, 168), 48), (680, 824));
+        // 3840×2160 at scale 2 is a 1920×1080 layout. The second monitor starts at x=1920.
+        let hidpi = monitor(1920, 0, 3840, 2160, 2.0, [0, 0, 0, 0], true);
+        assert_eq!(pill_top_left(&hidpi, (560, 168), 48), (2600, 864));
+        let monitors = [
+            monitor(0, 0, 1920, 1080, 1.0, [0, 0, 0, 0], false),
+            monitor(1920, 0, 1920, 1080, 1.0, [0, 0, 0, 0], true),
+        ];
+        assert_eq!(focused_monitor(&monitors).unwrap().x, 1920);
+        assert!(on_a_monitor(&monitors, 2000, 10));
+        assert!(!on_a_monitor(&monitors, 5000, 10));
+    }
+
+    #[test]
+    fn monitors_json_uses_logical_reserved_zones() {
+        let body = r#"[{"name":"DP-1","width":1920,"height":1080,"x":0,"y":0,"scale":1.0,"focused":true,"reserved":[30,0,0,0],"refreshRate":60.0}]"#;
+        let monitors = parse_monitors(body).unwrap();
+        assert_eq!(monitors.len(), 1);
+        assert!(monitors[0].focused);
+        assert_eq!(monitors[0].reserved, [30, 0, 0, 0]);
+        assert_eq!(monitors[0].logical_size(), (1920, 1080));
+    }
+}
