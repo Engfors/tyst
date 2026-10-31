@@ -118,7 +118,9 @@ pub struct Hyprland {
     socket: PathBuf,
     /// This process. Hyprland reports it from the client credentials, which another window cannot set.
     pid: i64,
-    /// Learned from the first dispatch. `None` until a command has been tried.
+    /// How long one socket round-trip may take.
+    timeout: Duration,
+    /// Set only after a definitive probe. An IO error, timeout, or unexpected reply leaves this empty.
     dispatch: std::sync::Mutex<Option<DispatchKind>>,
 }
 
@@ -129,7 +131,7 @@ impl Hyprland {
         if !socket.exists() {
             return Err(DesktopError::Hyprland(format!("no socket at {}", socket.display())));
         }
-        Ok(Self { socket, pid: i64::from(std::process::id()), dispatch: std::sync::Mutex::new(None) })
+        Ok(Self { socket, pid: i64::from(std::process::id()), timeout: TIMEOUT, dispatch: std::sync::Mutex::new(None) })
     }
 
     /// The focused window, if there is one. This is the paste target, so it is not limited to our pid.
@@ -197,7 +199,7 @@ impl Hyprland {
     /// Asks Hyprland to reread its config. Runs the socket on this thread; call it from a
     /// worker, not the UI thread or an async worker.
     pub fn reload_blocking(&self) -> Result<(), DesktopError> {
-        let reply = read_socket(&self.socket, "reload")?;
+        let reply = read_socket(&self.socket, "reload", self.timeout)?;
         let line = reply.lines().next().unwrap_or("").trim();
         if line.is_empty() || line == "ok" { Ok(()) } else { Err(DesktopError::Hyprland(brief(line).to_string())) }
     }
@@ -232,33 +234,36 @@ impl Hyprland {
         self.dispatch_either(&classic, &lua).await
     }
 
-    /// Sends `classic` or `lua`. The choice is probed once per process with [`LUA_PROBE`]:
-    /// success means this compositor speaks Lua dispatchers, anything else means classic.
+    /// Sends `classic` or `lua`. One [`LUA_PROBE`] per call until the reply is exactly `ok`
+    /// (Lua) or `Invalid dispatcher` (classic). Anything else is not cached, so the next
+    /// dispatch probes again. A call probes at most once, then either dispatches or returns.
     async fn dispatch_either(&self, classic: &str, lua: &str) -> Result<(), DesktopError> {
-        match self.dispatch_kind().await {
+        match self.dispatch_kind().await? {
             DispatchKind::Lua => self.dispatch_raw(lua).await,
             DispatchKind::Classic => self.dispatch_raw(classic).await,
         }
     }
 
-    async fn dispatch_kind(&self) -> DispatchKind {
+    async fn dispatch_kind(&self) -> Result<DispatchKind, DesktopError> {
         if let Some(kind) = *self.dispatch.lock().expect("dispatch kind") {
-            return kind;
+            return Ok(kind);
         }
-        let kind = match self.dispatch_raw(LUA_PROBE).await {
-            Ok(()) => DispatchKind::Lua,
-            Err(e) => {
-                log::info!("Hyprland did not accept {LUA_PROBE} ({e}); using classic dispatches");
-                DispatchKind::Classic
+        let body = self.command(&format!("dispatch {LUA_PROBE}")).await?;
+        let kind = match probe_reply(&body) {
+            Some(kind) => kind,
+            None => {
+                let line = body.lines().next().unwrap_or("").trim();
+                return Err(DesktopError::Hyprland(format!("dispatch probe inconclusive: {}", brief(line))));
             }
         };
         *self.dispatch.lock().expect("dispatch kind") = Some(kind);
-        kind
+        log::info!("Hyprland dispatch syntax: {kind:?}");
+        Ok(kind)
     }
 
     #[cfg(test)]
     fn for_test(socket: PathBuf) -> Self {
-        Self { socket, pid: 1, dispatch: std::sync::Mutex::new(None) }
+        Self { socket, pid: 1, timeout: Duration::from_millis(200), dispatch: std::sync::Mutex::new(None) }
     }
 
     async fn dispatch_raw(&self, args: &str) -> Result<(), DesktopError> {
@@ -275,21 +280,35 @@ impl Hyprland {
     async fn command(&self, request: &str) -> Result<String, DesktopError> {
         let socket = self.socket.clone();
         let request = request.to_string();
-        tokio::task::spawn_blocking(move || read_socket(&socket, &request))
+        let timeout = self.timeout;
+        tokio::task::spawn_blocking(move || read_socket(&socket, &request, timeout))
             .await
             .map_err(|e| DesktopError::Hyprland(format!("socket task: {e}")))?
     }
 }
 
+/// `Some(Lua)` only when the first line is exactly `ok`. `Some(Classic)` only when it is
+/// exactly `Invalid dispatcher`. Empty or any other text is probed again next time.
+fn probe_reply(body: &str) -> Option<DispatchKind> {
+    let line = body.lines().next().unwrap_or("").trim();
+    if line == "ok" {
+        Some(DispatchKind::Lua)
+    } else if line == "Invalid dispatcher" {
+        Some(DispatchKind::Classic)
+    } else {
+        None
+    }
+}
+
 /// Writes one command and reads the reply. The request is a fixed command or an address
 /// and integers checked by [`is_window_address`]; it never contains a window title.
-fn read_socket(socket: &Path, request: &str) -> Result<String, DesktopError> {
+fn read_socket(socket: &Path, request: &str, timeout: Duration) -> Result<String, DesktopError> {
     use std::io::{Read, Write};
     use std::net::Shutdown;
     use std::os::unix::net::UnixStream;
     let mut stream = UnixStream::connect(socket).map_err(|e| DesktopError::Hyprland(format!("socket: {e}")))?;
-    let _ = stream.set_read_timeout(Some(TIMEOUT));
-    let _ = stream.set_write_timeout(Some(TIMEOUT));
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
     stream.write_all(request.as_bytes()).map_err(|e| DesktopError::Hyprland(format!("socket write: {e}")))?;
     let _ = stream.shutdown(Shutdown::Write);
     let mut buf = Vec::new();
@@ -617,45 +636,83 @@ mod tests {
         assert!(focus_commands("0x0").is_none());
     }
 
-    /// Speaks the Hyprland socket protocol: read one request until the client closes its write
-    /// side, then write `reply` and close.
-    fn fake_socket(
-        reply: impl Fn(&str) -> String + Send + Sync + 'static,
-    ) -> (Hyprland, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
-        use std::io::{Read, Write};
-        use std::os::unix::net::UnixListener;
+    /// One directory per test so two sockets never share a path. Removed when dropped.
+    struct FakeSocket {
+        hypr: Hyprland,
+        seen: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        dir: PathBuf,
+    }
+
+    impl Drop for FakeSocket {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn unique_dir() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
-        let path = std::path::PathBuf::from(format!("/tmp/tyst-hypr-{}.sock", N.fetch_add(1, Ordering::Relaxed)));
-        let _ = std::fs::remove_file(&path);
-        let listener = UnixListener::bind(&path).expect("bind fake hyprland socket");
+        let dir = std::env::temp_dir().join(format!(
+            "tyst-hypr-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    /// Speaks the Hyprland socket protocol: read one request until the client closes its write
+    /// side, then write `reply` and close. Each connection is its own thread so a slow reply
+    /// does not block the next one.
+    fn fake_socket(reply: impl Fn(&str) -> String + Send + Sync + 'static) -> FakeSocket {
+        let dir = unique_dir();
+        let path = dir.join("hypr.sock");
+        let seen = serve(&path, reply);
+        FakeSocket { hypr: Hyprland::for_test(path), seen, dir }
+    }
+
+    fn serve(
+        path: &Path,
+        reply: impl Fn(&str) -> String + Send + Sync + 'static,
+    ) -> std::sync::Arc<std::sync::Mutex<Vec<String>>> {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixListener;
+        let _ = std::fs::remove_file(path);
+        let listener = UnixListener::bind(path).expect("bind fake hyprland socket");
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let record = seen.clone();
+        let reply = std::sync::Arc::new(reply);
         std::thread::spawn(move || {
-            for _ in 0..8 {
+            for _ in 0..16 {
                 let Ok((mut stream, _)) = listener.accept() else { break };
-                let mut buf = Vec::new();
-                let mut tmp = [0u8; 2048];
-                loop {
-                    match stream.read(&mut tmp) {
-                        Ok(0) => break,
-                        Ok(n) => buf.extend_from_slice(&tmp[..n]),
-                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                        Err(_) => return,
+                let record = record.clone();
+                let reply = reply.clone();
+                std::thread::spawn(move || {
+                    let mut buf = Vec::new();
+                    let mut tmp = [0u8; 2048];
+                    loop {
+                        match stream.read(&mut tmp) {
+                            Ok(0) => break,
+                            Ok(n) => buf.extend_from_slice(&tmp[..n]),
+                            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                            Err(_) => return,
+                        }
                     }
-                }
-                let req = String::from_utf8_lossy(&buf).into_owned();
-                record.lock().expect("requests").push(req.clone());
-                let _ = stream.write_all(reply(&req).as_bytes());
+                    let req = String::from_utf8_lossy(&buf).into_owned();
+                    record.lock().expect("requests").push(req.clone());
+                    let _ = stream.write_all(reply(&req).as_bytes());
+                });
             }
         });
-        (Hyprland::for_test(path), seen)
+        seen
     }
 
     #[tokio::test]
     async fn dispatch_either_probes_then_uses_classic_when_lua_is_unknown() {
-        let (hypr, seen) =
+        let fake =
             fake_socket(|req| if req.contains("hl.dsp.no_op") { "Invalid dispatcher\n".into() } else { "ok\n".into() });
+        let hypr = &fake.hypr;
+        let seen = &fake.seen;
         let (classic, lua) = focus_commands("0xabc").unwrap();
         hypr.dispatch_either(&classic, &lua).await.expect("classic focus");
         hypr.dispatch_either(&classic, &lua).await.expect("cached classic");
@@ -668,13 +725,15 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_either_uses_lua_after_the_probe_and_does_not_send_classic() {
-        let (hypr, seen) = fake_socket(|req| {
+        let fake = fake_socket(|req| {
             if req.contains("focuswindow") {
                 "hl.dispatch(...): ')' expected near 'address'\n".into()
             } else {
                 "ok\n".into()
             }
         });
+        let hypr = &fake.hypr;
+        let seen = &fake.seen;
         let (classic, lua) = focus_commands("0xabc").unwrap();
         hypr.dispatch_either(&classic, &lua).await.expect("lua focus");
         let got = seen.lock().expect("requests").clone();
@@ -684,13 +743,90 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_either_returns_a_real_error_without_trying_the_other_grammar() {
-        let (hypr, seen) =
+        let fake =
             fake_socket(|req| if req.contains("hl.dsp.no_op") { "ok\n".into() } else { "no such window\n".into() });
+        let hypr = &fake.hypr;
+        let seen = &fake.seen;
         let (classic, lua) = focus_commands("0xabc").unwrap();
         let err = hypr.dispatch_either(&classic, &lua).await.expect_err("window is gone");
         assert!(err.to_string().contains("no such window"), "{err}");
         let got = seen.lock().expect("requests").clone();
         assert_eq!(got, vec!["dispatch hl.dsp.no_op()".to_string(), format!("dispatch {lua}")]);
+    }
+
+    #[test]
+    fn probe_reply_is_only_exact_ok_or_invalid_dispatcher() {
+        assert_eq!(probe_reply("ok"), Some(DispatchKind::Lua));
+        assert_eq!(probe_reply("ok\n"), Some(DispatchKind::Lua));
+        assert_eq!(probe_reply("Invalid dispatcher"), Some(DispatchKind::Classic));
+        assert_eq!(probe_reply("Invalid dispatcher\n"), Some(DispatchKind::Classic));
+        assert_eq!(probe_reply(""), None);
+        assert_eq!(probe_reply("ok please"), None);
+        assert_eq!(probe_reply("no such window"), None);
+        assert_eq!(probe_reply("hl.dispatch(...): ')' expected near 'address'"), None);
+    }
+
+    #[tokio::test]
+    async fn empty_or_unexpected_probe_is_not_cached() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let n = std::sync::Arc::new(AtomicU32::new(0));
+        let ticks = n.clone();
+        let fake = fake_socket(move |req| {
+            if !req.contains("hl.dsp.no_op") {
+                return "ok\n".into();
+            }
+            match ticks.fetch_add(1, Ordering::Relaxed) {
+                0 => String::new(),
+                1 => "please reboot\n".into(),
+                _ => "Invalid dispatcher\n".into(),
+            }
+        });
+        let (classic, lua) = focus_commands("0xabc").unwrap();
+        let empty = fake.hypr.dispatch_either(&classic, &lua).await.expect_err("empty probe");
+        assert!(empty.to_string().contains("inconclusive"), "{empty}");
+        let odd = fake.hypr.dispatch_either(&classic, &lua).await.expect_err("unexpected probe");
+        assert!(odd.to_string().contains("inconclusive"), "{odd}");
+        fake.hypr.dispatch_either(&classic, &lua).await.expect("classic after a real reply");
+        let got = fake.seen.lock().expect("requests").clone();
+        assert_eq!(
+            got,
+            vec![
+                "dispatch hl.dsp.no_op()".to_string(),
+                "dispatch hl.dsp.no_op()".to_string(),
+                "dispatch hl.dsp.no_op()".to_string(),
+                format!("dispatch {classic}"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn socket_error_and_timeout_are_not_cached() {
+        let dir = unique_dir();
+        let path = dir.join("hypr.sock");
+        let hypr = Hyprland::for_test(path.clone());
+        let (classic, lua) = focus_commands("0xabc").unwrap();
+        let missing = hypr.dispatch_either(&classic, &lua).await.expect_err("no socket");
+        assert!(missing.to_string().contains("socket"), "{missing}");
+
+        let slow = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let gate = slow.clone();
+        let seen = serve(&path, move |req| {
+            if req.contains("hl.dsp.no_op") && gate.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(400));
+                return "ok\n".into();
+            }
+            if req.contains("hl.dsp.no_op") {
+                return "Invalid dispatcher\n".into();
+            }
+            "ok\n".into()
+        });
+        let timed = hypr.dispatch_either(&classic, &lua).await.expect_err("probe timed out");
+        assert!(timed.to_string().contains("no answer") || timed.to_string().contains("socket"), "{timed}");
+        hypr.dispatch_either(&classic, &lua).await.expect("classic after the timeout");
+        let got = seen.lock().expect("requests").clone();
+        assert!(got.iter().filter(|r| r.contains("hl.dsp.no_op")).count() >= 2, "{got:?}");
+        assert!(got.last().is_some_and(|r| r.contains("focuswindow")), "{got:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn monitor(x: i32, y: i32, width: i32, height: i32, scale: f64, reserved: Reserved, focused: bool) -> Monitor {

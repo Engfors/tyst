@@ -133,10 +133,10 @@ dofile((os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")) .. "/
 source = ~/.config/tyst/hyprland.conf
 ```
 
-Reload Hyprland and restart Tyst so the windows map under the rules. Rules match the window
-title. `no_initial_focus` keeps a newly shown window from taking the keyboard. The "Name this
-meeting" field can still be focused. The pill is placed at the bottom centre of the focused
-monitor.
+Reload Hyprland and restart Tyst so the windows map under the rules. Rules match class
+`tyst` and the window title. `no_initial_focus` keeps a newly shown window from taking the
+keyboard. The "Name this meeting" field can still be focused. The pill is placed at the
+bottom centre of the focused monitor.
 
 Paste uses `wtype` (Ctrl+V, Ctrl+Shift+V in a terminal), which Omarchy ships. `ydotool` is the
 fallback. The previous clipboard text is restored the same way as on KDE. Shortcuts use the

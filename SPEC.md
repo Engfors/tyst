@@ -401,10 +401,10 @@ and does not edit the user's Hyprland config; the user adds `source = <that file
 
 - **Rules:** float, pin (above other windows, every workspace), `no_initial_focus` (a newly shown
   window does not take the keyboard; the name field can still be focused), `border_size = 0`.
-  Matched on the window title (`Tyst Meeting`, `Tyst Dictation`). The Wayland app id follows
-  the GTK program name (`tyst`) unless `enableGTKAppId` is set, which it is not, so rules do
-  not match on class. Omarchy (Hyprland 0.56 Lua) loads `hyprland.lua` via `dofile` (`hl.window_rule`);
-  a classic config `source`s `hyprland.conf`.
+  Matched on class `tyst` (what `hyprctl clients -j` reports for the Settings and Meeting
+  windows on Omarchy) and the window title (`Tyst Meeting`, `Tyst Dictation`). Omarchy
+  (Hyprland 0.56 Lua) loads `hyprland.lua` via `dofile` (`hl.window_rule`); a classic config
+  `source`s `hyprland.conf`.
 - **IPC:** active window address and class (paste-back and terminal detection), focus that
   window, place the pill at the bottom centre of the focused monitor, read and restore the
   meeting window position. Our own windows are this process's pid plus the title. Dispatch uses

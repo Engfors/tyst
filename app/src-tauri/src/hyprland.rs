@@ -34,9 +34,9 @@ pub fn lua_rules_path() -> PathBuf {
     crate::config::config_dir().join("hyprland.lua")
 }
 
-/// Confirmed Wayland class regex. `None` until `hyprctl clients -j` shows the real class
-/// (expected `^(tyst)$`). Setting this is the only edit needed to match on class as well as title.
-const WINDOW_CLASS: Option<&str> = None;
+/// Wayland class from `hyprctl clients -j` on Omarchy (Hyprland 0.56.2): both the Settings
+/// and Meeting windows report `class` and `initialClass` `tyst`.
+const WINDOW_CLASS: Option<&str> = Some("^(tyst)$");
 
 /// Line to add in `~/.config/hypr/hyprland.lua` after `require("default.hypr.omarchy")`.
 /// The path is a Lua string, so a newline in it cannot start a new statement.
@@ -45,8 +45,9 @@ pub fn omarchy_dofile(lua_path: &Path) -> String {
 }
 
 /// The rules file. `source_path` is the line the user adds to their own Hyprland config.
+/// A newline in the path stays inside the `#` comment (`\n` as two characters).
 pub fn rules_document(source_path: &Path) -> String {
-    let path = source_path.display();
+    let path = conf_comment(&source_path.display().to_string());
     format!(
         "\
 # Tyst window rules for a classic Hyprland {RULES_SINCE} config (and newer, until Lua-only).
@@ -57,8 +58,7 @@ pub fn rules_document(source_path: &Path) -> String {
 #
 #   source = {path}
 #
-# Rules match the window title. The Wayland app id is the GTK program name (`tyst` in
-# StartupWMClass) unless enableGTKAppId is set, which it is not, so the class is not matched.
+# Rules match class ^(tyst)$ and the window title. hyprctl on Omarchy reports that class.
 # no_initial_focus keeps a newly shown window from taking the keyboard.
 # no_focus is not set: it would block typing into \"Name this meeting\".
 
@@ -130,6 +130,11 @@ hl.window_rule({{
 ",
         title = lua_string(&re2_exact(title)),
     )
+}
+
+/// Keeps `text` on one Hyprland `#` comment line. A raw newline would start a new config line.
+fn conf_comment(text: &str) -> String {
+    text.replace("\r\n", "\\n").replace(['\n', '\r'], "\\n")
 }
 
 /// Escape a Lua double-quoted string.
@@ -218,11 +223,14 @@ mod tests {
         let doc = rules_document(Path::new("/home/me/.config/tyst/hyprland.conf"));
         assert!(doc.contains("Hyprland 0.53"));
         assert!(doc.contains("source = /home/me/.config/tyst/hyprland.conf"));
+        let broken = rules_document(Path::new("/tmp/tyst\nkeyword = bad"));
+        assert_eq!(broken.lines().filter(|l| l.contains("source =")).count(), 1);
+        assert!(broken.lines().all(|l| !l.contains("keyword") || l.trim_start().starts_with('#')));
         assert!(doc.contains("match:title = ^(Tyst Meeting)$"));
         assert!(doc.contains("match:title = ^(Tyst Dictation)$"));
         let effects: Vec<&str> = doc.lines().filter(|l| !l.trim_start().starts_with('#')).collect();
         let effects = effects.join("\n");
-        assert!(!effects.contains("match:class"));
+        assert!(effects.contains("match:class = ^(tyst)$"));
         assert!(effects.contains("float = on"));
         assert!(effects.contains("pin = on"));
         assert!(effects.contains("no_initial_focus = on"));
@@ -234,6 +242,7 @@ mod tests {
         let lua_path = Path::new("/home/me/.config/tyst/hyprland.lua");
         let lua = lua_rules_document(lua_path);
         assert!(lua.contains("hl.window_rule({"));
+        assert!(lua.contains("class = \"^(tyst)$\""));
         assert!(lua.contains("title = \"^(Tyst Meeting)$\""));
         assert!(lua.contains("title = \"^(Tyst Dictation)$\""));
         assert!(lua.contains("float = true"));
