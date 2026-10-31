@@ -232,25 +232,33 @@ impl Hyprland {
         self.dispatch_either(&classic, &lua).await
     }
 
-    /// Sends `classic` (`focuswindow`, `movewindowpixel`, …). If this compositor's Lua config
-    /// rejects that grammar, sends `lua` (`hl.dsp.*`) and keeps that choice.
+    /// Sends `classic` or `lua`. The choice is probed once per process with [`LUA_PROBE`]:
+    /// success means this compositor speaks Lua dispatchers, anything else means classic.
     async fn dispatch_either(&self, classic: &str, lua: &str) -> Result<(), DesktopError> {
-        let known = *self.dispatch.lock().expect("dispatch kind");
-        match known {
-            Some(DispatchKind::Lua) => self.dispatch_raw(lua).await,
-            Some(DispatchKind::Classic) => self.dispatch_raw(classic).await,
-            None => match self.dispatch_raw(classic).await {
-                Ok(()) => {
-                    *self.dispatch.lock().expect("dispatch kind") = Some(DispatchKind::Classic);
-                    Ok(())
-                }
-                Err(e) if classic_dispatch_rejected_by_lua(&e.to_string()) => {
-                    *self.dispatch.lock().expect("dispatch kind") = Some(DispatchKind::Lua);
-                    self.dispatch_raw(lua).await
-                }
-                Err(e) => Err(e),
-            },
+        match self.dispatch_kind().await {
+            DispatchKind::Lua => self.dispatch_raw(lua).await,
+            DispatchKind::Classic => self.dispatch_raw(classic).await,
         }
+    }
+
+    async fn dispatch_kind(&self) -> DispatchKind {
+        if let Some(kind) = *self.dispatch.lock().expect("dispatch kind") {
+            return kind;
+        }
+        let kind = match self.dispatch_raw(LUA_PROBE).await {
+            Ok(()) => DispatchKind::Lua,
+            Err(e) => {
+                log::info!("Hyprland did not accept {LUA_PROBE} ({e}); using classic dispatches");
+                DispatchKind::Classic
+            }
+        };
+        *self.dispatch.lock().expect("dispatch kind") = Some(kind);
+        kind
+    }
+
+    #[cfg(test)]
+    fn for_test(socket: PathBuf) -> Self {
+        Self { socket, pid: 1, dispatch: std::sync::Mutex::new(None) }
     }
 
     async fn dispatch_raw(&self, args: &str) -> Result<(), DesktopError> {
@@ -409,14 +417,12 @@ pub fn float_commands(address: &str) -> Option<(String, String)> {
     }
     Some((
         format!("setfloating address:{address}"),
-        format!("hl.dsp.window.float({{ window = 'address:{address}', action = 'set' }})"),
+        format!("hl.dsp.window.float({{ window = 'address:{address}', action = 'enable' }})"),
     ))
 }
 
-/// True when a classic dispatcher was parsed as Lua (`hl.dispatch(...): ')' expected near ...`).
-pub fn classic_dispatch_rejected_by_lua(message: &str) -> bool {
-    message.contains("hl.dispatch") || message.contains("expected near")
-}
+/// Harmless Lua dispatcher (`hl.dsp.no_op` in Hyprland 0.56). A classic config does not accept it.
+const LUA_PROBE: &str = "hl.dsp.no_op()";
 
 fn parse_clients(body: &str) -> Result<Vec<RawClient>, DesktopError> {
     let body = body.trim();
@@ -607,11 +613,84 @@ mod tests {
         assert_eq!(lua, "hl.dsp.window.move({ window = 'address:0xabc', x = 680, y = 2543 })");
         let (classic, lua) = float_commands("0xabc").unwrap();
         assert_eq!(classic, "setfloating address:0xabc");
-        assert_eq!(lua, "hl.dsp.window.float({ window = 'address:0xabc', action = 'set' })");
-        assert!(classic_dispatch_rejected_by_lua("dispatch failed: hl.dispatch(...): ')' expected near 'address'"));
-        assert!(classic_dispatch_rejected_by_lua("')' expected near 'exact'"));
-        assert!(!classic_dispatch_rejected_by_lua("dispatch failed: no window"));
+        assert_eq!(lua, "hl.dsp.window.float({ window = 'address:0xabc', action = 'enable' })");
         assert!(focus_commands("0x0").is_none());
+    }
+
+    /// Speaks the Hyprland socket protocol: read one request until the client closes its write
+    /// side, then write `reply` and close.
+    fn fake_socket(
+        reply: impl Fn(&str) -> String + Send + Sync + 'static,
+    ) -> (Hyprland, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixListener;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let path = std::path::PathBuf::from(format!("/tmp/tyst-hypr-{}.sock", N.fetch_add(1, Ordering::Relaxed)));
+        let _ = std::fs::remove_file(&path);
+        let listener = UnixListener::bind(&path).expect("bind fake hyprland socket");
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = seen.clone();
+        std::thread::spawn(move || {
+            for _ in 0..8 {
+                let Ok((mut stream, _)) = listener.accept() else { break };
+                let mut buf = Vec::new();
+                let mut tmp = [0u8; 2048];
+                loop {
+                    match stream.read(&mut tmp) {
+                        Ok(0) => break,
+                        Ok(n) => buf.extend_from_slice(&tmp[..n]),
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(_) => return,
+                    }
+                }
+                let req = String::from_utf8_lossy(&buf).into_owned();
+                record.lock().expect("requests").push(req.clone());
+                let _ = stream.write_all(reply(&req).as_bytes());
+            }
+        });
+        (Hyprland::for_test(path), seen)
+    }
+
+    #[tokio::test]
+    async fn dispatch_either_probes_then_uses_classic_when_lua_is_unknown() {
+        let (hypr, seen) =
+            fake_socket(|req| if req.contains("hl.dsp.no_op") { "Invalid dispatcher\n".into() } else { "ok\n".into() });
+        let (classic, lua) = focus_commands("0xabc").unwrap();
+        hypr.dispatch_either(&classic, &lua).await.expect("classic focus");
+        hypr.dispatch_either(&classic, &lua).await.expect("cached classic");
+        let got = seen.lock().expect("requests").clone();
+        assert_eq!(
+            got,
+            vec!["dispatch hl.dsp.no_op()".to_string(), format!("dispatch {classic}"), format!("dispatch {classic}"),]
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_either_uses_lua_after_the_probe_and_does_not_send_classic() {
+        let (hypr, seen) = fake_socket(|req| {
+            if req.contains("focuswindow") {
+                "hl.dispatch(...): ')' expected near 'address'\n".into()
+            } else {
+                "ok\n".into()
+            }
+        });
+        let (classic, lua) = focus_commands("0xabc").unwrap();
+        hypr.dispatch_either(&classic, &lua).await.expect("lua focus");
+        let got = seen.lock().expect("requests").clone();
+        assert_eq!(got, vec!["dispatch hl.dsp.no_op()".to_string(), format!("dispatch {lua}")]);
+        assert!(!got.iter().any(|r| r.contains("focuswindow")));
+    }
+
+    #[tokio::test]
+    async fn dispatch_either_returns_a_real_error_without_trying_the_other_grammar() {
+        let (hypr, seen) =
+            fake_socket(|req| if req.contains("hl.dsp.no_op") { "ok\n".into() } else { "no such window\n".into() });
+        let (classic, lua) = focus_commands("0xabc").unwrap();
+        let err = hypr.dispatch_either(&classic, &lua).await.expect_err("window is gone");
+        assert!(err.to_string().contains("no such window"), "{err}");
+        let got = seen.lock().expect("requests").clone();
+        assert_eq!(got, vec!["dispatch hl.dsp.no_op()".to_string(), format!("dispatch {lua}")]);
     }
 
     fn monitor(x: i32, y: i32, width: i32, height: i32, scale: f64, reserved: Reserved, focused: bool) -> Monitor {

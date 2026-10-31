@@ -34,9 +34,14 @@ pub fn lua_rules_path() -> PathBuf {
     crate::config::config_dir().join("hyprland.lua")
 }
 
+/// Confirmed Wayland class regex. `None` until `hyprctl clients -j` shows the real class
+/// (expected `^(tyst)$`). Setting this is the only edit needed to match on class as well as title.
+const WINDOW_CLASS: Option<&str> = None;
+
 /// Line to add in `~/.config/hypr/hyprland.lua` after `require("default.hypr.omarchy")`.
+/// The path is a Lua string, so a newline in it cannot start a new statement.
 pub fn omarchy_dofile(lua_path: &Path) -> String {
-    format!("dofile(\"{}\")", lua_path.display())
+    format!("dofile(\"{}\")", lua_string(&lua_path.display().to_string()))
 }
 
 /// The rules file. `source_path` is the line the user adds to their own Hyprland config.
@@ -66,11 +71,12 @@ pub fn rules_document(source_path: &Path) -> String {
 }
 
 fn rule_block(name: &str, title: &str) -> String {
+    let class = WINDOW_CLASS.map(|c| format!("    match:class = {c}\n")).unwrap_or_default();
     format!(
         "\
 windowrule {{
     name = {name}
-    match:title = {title_re}
+{class}    match:title = {title_re}
 
     float = on
     pin = on
@@ -110,11 +116,12 @@ pub fn lua_rules_document(dofile_path: &Path) -> String {
 }
 
 fn lua_rule(name: &str, title: &str) -> String {
+    let class = WINDOW_CLASS.map(|c| format!(" class = \"{}\",", lua_string(c))).unwrap_or_default();
     format!(
         "\
 hl.window_rule({{
   name = \"{name}\",
-  match = {{ title = \"{title}\" }},
+  match = {{ title = \"{title}\",{class} }},
   float = true,
   pin = true,
   no_initial_focus = true,
@@ -133,6 +140,7 @@ fn lua_string(s: &str) -> String {
             '\\' => out.push_str("\\\\"),
             '"' => out.push_str("\\\""),
             '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
             c => out.push(c),
         }
     }
@@ -235,6 +243,27 @@ mod tests {
         let lua_code = lua_code.join("\n");
         assert!(!lua_code.contains("no_focus"));
         assert!(!lua_code.contains("o.window"));
+        let hostile = Path::new("/tmp/tyst\nos.execute('bad')");
+        let line = omarchy_dofile(hostile);
+        assert!(!line.contains('\n'), "{line}");
+        assert!(line.contains("\\n"));
+        let hostile_lua = lua_rules_document(hostile);
+        assert!(
+            hostile_lua.lines().all(|l| {
+                let t = l.trim_start();
+                t.is_empty()
+                    || t.starts_with("--")
+                    || t.starts_with("hl.window_rule")
+                    || t.starts_with("name ")
+                    || t.starts_with("match ")
+                    || t.starts_with("float ")
+                    || t.starts_with("pin ")
+                    || t.starts_with("no_initial_focus")
+                    || t.starts_with("border_size")
+                    || t.starts_with('}')
+            }),
+            "{hostile_lua}"
+        );
     }
 
     #[test]
