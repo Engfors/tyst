@@ -401,10 +401,12 @@ and does not edit the user's Hyprland config; the user adds `source = <that file
 
 - **Rules:** float, pin (above other windows, every workspace), `no_initial_focus` (a newly shown
   window does not take the keyboard; the name field can still be focused), `border_size = 0`.
-  Matched on the window title (`Tyst Meeting`, `Tyst Dictation`).
+  Matched on the app id and the window title (`Tyst Meeting`, `Tyst Dictation`).
 - **IPC:** active window address and class (paste-back and terminal detection), focus that
   window, place the pill at the bottom centre of the focused monitor, read and restore the
-  meeting window position. Coordinates are Hyprland's global layout (logical pixels).
+  meeting window position. Our own windows are the ones with this process's pid and app id, not
+  a matching title alone. Coordinates are Hyprland's global layout (logical pixels). Monitor
+  `reserved` is `[left, top, right, bottom]`; a top bar does not move the pill's bottom edge.
 - **Paste:** xdg-desktop-portal-hyprland has GlobalShortcuts and no RemoteDesktop. Paste is
   `wtype` (Ctrl+V, Ctrl+Shift+V in a terminal), then `ydotool`. Clipboard save-and-restore is
   unchanged.

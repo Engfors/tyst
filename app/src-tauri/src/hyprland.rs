@@ -58,11 +58,13 @@ pub fn rules_document(source_path: &Path) -> String {
 }
 
 fn rule_block(name: &str, title: &str) -> String {
+    // Class and title both have to match. A title alone is not unique.
     format!(
         "\
 windowrule {{
     name = {name}
-    match:title = {regex}
+    match:class = {class}
+    match:title = {title_re}
 
     float = on
     pin = on
@@ -70,13 +72,14 @@ windowrule {{
     border_size = 0
 }}
 ",
-        regex = exact_title(title),
+        class = re2_exact(crate::shortcuts::APP_ID),
+        title_re = re2_exact(title),
     )
 }
 
 /// A RE2 regex that matches `title` and nothing else. Hyprland expands `$NAME` only when a
 /// variable name follows the `$`, so the end anchor stays literal.
-fn exact_title(title: &str) -> String {
+fn re2_exact(title: &str) -> String {
     let mut out = String::from("^(");
     for c in title.chars() {
         if matches!(c, '.' | '+' | '*' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '^' | '$' | '\\') {
@@ -99,8 +102,20 @@ pub fn install_rule() -> Result<(), String> {
     let text = rules_document(&path);
     let changed = write_if_changed(&path, text.as_bytes())?;
     if changed {
-        match tyst_platform::hyprland::Hyprland::connect().and_then(|h| h.reload()) {
-            Ok(()) => log::info!("Hyprland reloaded its config for the Tyst window rules"),
+        match tyst_platform::hyprland::Hyprland::connect(crate::shortcuts::APP_ID) {
+            Ok(h) => {
+                // The socket read must not run on the UI thread. The process stays up, so the
+                // thread finishing after setup returns is fine.
+                if let Err(e) = std::thread::Builder::new().name("hyprland-reload".into()).spawn(move || {
+                    if let Err(e) = h.reload_blocking() {
+                        log::warn!("could not ask Hyprland to reload; the rules apply on the next reload: {e}");
+                    } else {
+                        log::info!("Hyprland reloaded its config for the Tyst window rules");
+                    }
+                }) {
+                    log::warn!("could not start the Hyprland reload: {e}");
+                }
+            }
             Err(e) => log::warn!("could not ask Hyprland to reload; the rules apply on the next reload: {e}"),
         }
     }
@@ -132,6 +147,7 @@ mod tests {
         let doc = rules_document(Path::new("/home/me/.config/tyst/hyprland.conf"));
         assert!(doc.contains("Hyprland 0.53"));
         assert!(doc.contains("source = /home/me/.config/tyst/hyprland.conf"));
+        assert!(doc.contains("match:class = ^(com\\.engfors\\.tyst)$"));
         assert!(doc.contains("match:title = ^(Tyst Meeting)$"));
         assert!(doc.contains("match:title = ^(Tyst Dictation)$"));
         let effects: Vec<&str> = doc.lines().filter(|l| !l.trim_start().starts_with('#')).collect();
@@ -141,7 +157,7 @@ mod tests {
         assert!(effects.contains("no_initial_focus = on"));
         assert!(effects.contains("border_size = 0"));
         assert!(!effects.lines().any(|l| l.trim_start().starts_with("no_focus")));
-        assert_eq!(exact_title("a.b"), r"^(a\.b)$");
+        assert_eq!(re2_exact("a.b"), r"^(a\.b)$");
         assert!(BIND_HINT.contains("tyst --dictate"));
         assert!(BIND_HINT.contains("tyst --toggle-meeting"));
     }
@@ -151,8 +167,15 @@ mod tests {
         use tyst_platform::hyprland::{self, Monitor};
         assert!(hyprland::detect_hyprland(false, Some("Hyprland"), None));
         assert!(!hyprland::detect_hyprland(true, Some("Hyprland"), Some("sig")));
-        let monitor =
-            Monitor { x: 1920, y: 0, width: 3840, height: 2160, scale: 2.0, focused: true, reserved: [0, 0, 0, 0] };
+        let monitor = Monitor {
+            x: 1920,
+            y: 0,
+            width: 3840,
+            height: 2160,
+            scale: 2.0,
+            focused: true,
+            reserved: tyst_platform::hyprland::Reserved::default(),
+        };
         assert_eq!(hyprland::pill_top_left(&monitor, (560, 168), 48), (2600, 864));
         let body = r#"{"address":"0xabc","class":"kitty","title":"user typed this","at":[1,2],"size":[3,4]}"#;
         let window = hyprland::parse_active_window(body).unwrap().unwrap();

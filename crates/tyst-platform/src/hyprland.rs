@@ -4,8 +4,10 @@
 //!
 //! Wayland clients cannot do this themselves. The socket is the one `hyprctl` uses
 //! (`$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket.sock`). Commands are the same
-//! strings `hyprctl` writes; replies are read back and the connection closes. Window titles are
-//! matched locally and then dropped: they are never logged and never sent back to Hyprland.
+//! strings `hyprctl` writes; replies are read back and the connection closes. Our own windows
+//! are recognised by this process's pid and app id together with the title. A title on its own
+//! is not enough: another client can set the same title. Titles are matched locally and then
+//! dropped: they are never logged and never sent back to Hyprland.
 //!
 //! Coordinates are Hyprland's global layout space, the same space as a client's `at` field and
 //! as `movewindowpixel exact`. Monitor `width` / `height` from `hyprctl monitors` are the mode
@@ -41,6 +43,16 @@ pub struct MappedWindow {
     floating: bool,
 }
 
+/// Layer-shell exclusive zone, in logical pixels. Hyprland's `reserved` array is
+/// `[left, top, right, bottom]` (`m_reservedArea` left, top, right, bottom in `hyprctl`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Reserved {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
 /// One monitor, in the layout `hyprctl monitors -j` reports.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Monitor {
@@ -52,8 +64,7 @@ pub struct Monitor {
     pub height: i32,
     pub scale: f64,
     pub focused: bool,
-    /// Exclusive zones from layer-shell bars: top, bottom, left, right, in logical pixels.
-    pub reserved: [i32; 4],
+    pub reserved: Reserved,
 }
 
 impl Monitor {
@@ -96,111 +107,116 @@ pub fn is_window_address(id: &str) -> bool {
 
 pub struct Hyprland {
     socket: PathBuf,
+    /// This process. Hyprland reports it from the client credentials, which another window cannot set.
+    pid: i64,
+    /// Wayland app id (`com.engfors.tyst`). Matched with the pid and the title.
+    class: String,
 }
 
 impl Hyprland {
-    /// Connects if the instance socket exists.
-    pub fn connect() -> Result<Self, DesktopError> {
+    /// Connects if the instance socket exists. `class` is this app's Wayland app id.
+    pub fn connect(class: &str) -> Result<Self, DesktopError> {
         let socket = socket_path()?;
         if !socket.exists() {
             return Err(DesktopError::Hyprland(format!("no socket at {}", socket.display())));
         }
-        Ok(Self { socket })
+        Ok(Self { socket, pid: i64::from(std::process::id()), class: class.to_string() })
     }
 
-    /// The focused window, if there is one.
-    pub fn active_window(&self) -> Result<Option<WindowRef>, DesktopError> {
-        parse_active_window(&self.command("j/activewindow")?)
+    /// The focused window, if there is one. This is the paste target, so it is not limited to our pid.
+    pub async fn active_window(&self) -> Result<Option<WindowRef>, DesktopError> {
+        parse_active_window(&self.command("j/activewindow").await?)
     }
 
     /// Focuses the window with this address. False if that address is not mapped.
-    pub fn activate(&self, id: &str) -> Result<bool, DesktopError> {
+    pub async fn activate(&self, id: &str) -> Result<bool, DesktopError> {
         if !is_window_address(id) {
             return Ok(false);
         }
-        let clients = parse_clients(&self.command("j/clients")?)?;
+        let clients = parse_clients(&self.command("j/clients").await?)?;
         if !clients.iter().any(|c| c.address == id) {
             return Ok(false);
         }
-        self.focus_address(id)?;
+        self.focus_address(id).await?;
         Ok(true)
     }
 
-    /// Focuses the window whose title is exactly `title`. False if it is not mapped.
-    pub fn focus_title(&self, title: &str) -> Result<bool, DesktopError> {
-        let Some(window) = self.window_by_title(title)? else { return Ok(false) };
-        self.focus_address(&window.id)?;
+    /// Focuses our window whose title is exactly `title`. False if it is not mapped.
+    pub async fn focus_title(&self, title: &str) -> Result<bool, DesktopError> {
+        let Some(window) = self.own_window(title).await? else { return Ok(false) };
+        self.focus_address(&window.id).await?;
         Ok(true)
     }
 
-    /// Moves the window titled `title` to the bottom centre of the focused monitor, `bottom`
+    /// Moves our window titled `title` to the bottom centre of the focused monitor, `bottom`
     /// logical pixels above the work area's lower edge, and optionally gives it the keyboard.
     /// False if no such window is mapped yet (the caller retries while it maps).
-    pub fn place_bottom_center(&self, title: &str, bottom: i32, focus: bool) -> Result<bool, DesktopError> {
-        let Some(window) = self.window_by_title(title)? else { return Ok(false) };
+    pub async fn place_bottom_center(&self, title: &str, bottom: i32, focus: bool) -> Result<bool, DesktopError> {
+        let Some(window) = self.own_window(title).await? else { return Ok(false) };
         if window.size.0 <= 0 || window.size.1 <= 0 {
             return Ok(false);
         }
-        let monitors = self.monitors()?;
+        let monitors = self.monitors().await?;
         let Some(monitor) = focused_monitor(&monitors) else { return Ok(false) };
         let (x, y) = pill_top_left(monitor, window.size, bottom);
-        self.move_window(&window, x, y)?;
+        self.move_window(&window, x, y).await?;
         if focus {
-            self.focus_address(&window.id)?;
+            self.focus_address(&window.id).await?;
         }
         Ok(true)
     }
 
-    /// Top-left of the window titled `title`, in global logical pixels, or `None` if it is not
+    /// Top-left of our window titled `title`, in global logical pixels, or `None` if it is not
     /// mapped. (A Wayland client cannot read its own position.)
-    pub fn position(&self, title: &str) -> Result<Option<(i32, i32)>, DesktopError> {
-        Ok(self.window_by_title(title)?.map(|w| w.at))
+    pub async fn position(&self, title: &str) -> Result<Option<(i32, i32)>, DesktopError> {
+        Ok(self.own_window(title).await?.map(|w| w.at))
     }
 
-    /// Moves the window titled `title` so its top-left is `(x, y)`. The move is skipped when
+    /// Moves our window titled `title` so its top-left is `(x, y)`. The move is skipped when
     /// that point is on no monitor (a display that was unplugged). False if the window is not
     /// mapped yet.
-    pub fn move_to(&self, title: &str, x: i32, y: i32) -> Result<bool, DesktopError> {
-        let Some(window) = self.window_by_title(title)? else { return Ok(false) };
-        if !on_a_monitor(&self.monitors()?, x, y) {
+    pub async fn move_to(&self, title: &str, x: i32, y: i32) -> Result<bool, DesktopError> {
+        let Some(window) = self.own_window(title).await? else { return Ok(false) };
+        if !on_a_monitor(&self.monitors().await?, x, y) {
             log::info!("saved meeting position is not on a monitor; leaving the window");
             return Ok(true);
         }
-        self.move_window(&window, x, y)?;
+        self.move_window(&window, x, y).await?;
         Ok(true)
     }
 
-    /// Asks Hyprland to reread its config, so a rules file it already `source`s is picked up.
-    pub fn reload(&self) -> Result<(), DesktopError> {
-        let reply = self.command("reload")?;
+    /// Asks Hyprland to reread its config. Runs the socket on this thread; call it from a
+    /// worker, not the UI thread or an async worker.
+    pub fn reload_blocking(&self) -> Result<(), DesktopError> {
+        let reply = read_socket(&self.socket, "reload")?;
         let line = reply.lines().next().unwrap_or("").trim();
         if line.is_empty() || line == "ok" { Ok(()) } else { Err(DesktopError::Hyprland(brief(line).to_string())) }
     }
 
-    fn window_by_title(&self, title: &str) -> Result<Option<MappedWindow>, DesktopError> {
-        window_by_title(&self.command("j/clients")?, title)
+    async fn own_window(&self, title: &str) -> Result<Option<MappedWindow>, DesktopError> {
+        own_window(&self.command("j/clients").await?, title, self.pid, &self.class)
     }
 
-    fn monitors(&self) -> Result<Vec<Monitor>, DesktopError> {
-        parse_monitors(&self.command("j/monitors")?)
+    async fn monitors(&self) -> Result<Vec<Monitor>, DesktopError> {
+        parse_monitors(&self.command("j/monitors").await?)
     }
 
-    fn move_window(&self, window: &MappedWindow, x: i32, y: i32) -> Result<(), DesktopError> {
+    async fn move_window(&self, window: &MappedWindow, x: i32, y: i32) -> Result<(), DesktopError> {
         // A tiled window ignores `movewindowpixel`. Float first when the rules have not
         // (a sourced rules file floats it on map; this covers the run before that).
         if !window.floating {
-            self.dispatch(&format!("setfloating address:{}", window.id))?;
+            self.dispatch(&format!("setfloating address:{}", window.id)).await?;
         }
-        self.dispatch(&format!("movewindowpixel exact {x} {y},address:{}", window.id))?;
+        self.dispatch(&format!("movewindowpixel exact {x} {y},address:{}", window.id)).await?;
         Ok(())
     }
 
-    fn focus_address(&self, id: &str) -> Result<(), DesktopError> {
-        self.dispatch(&format!("focuswindow address:{id}"))
+    async fn focus_address(&self, id: &str) -> Result<(), DesktopError> {
+        self.dispatch(&format!("focuswindow address:{id}")).await
     }
 
-    fn dispatch(&self, args: &str) -> Result<(), DesktopError> {
-        let reply = self.command(&format!("dispatch {args}"))?;
+    async fn dispatch(&self, args: &str) -> Result<(), DesktopError> {
+        let reply = self.command(&format!("dispatch {args}")).await?;
         let line = reply.lines().next().unwrap_or("").trim();
         if line.is_empty() || line == "ok" {
             Ok(())
@@ -209,42 +225,50 @@ impl Hyprland {
         }
     }
 
-    /// Writes one command and reads the reply. The request is a fixed command or an address
-    /// and integers checked by [`is_window_address`]; it never contains a window title.
-    fn command(&self, request: &str) -> Result<String, DesktopError> {
-        use std::io::{Read, Write};
-        use std::net::Shutdown;
-        use std::os::unix::net::UnixStream;
-        let mut stream =
-            UnixStream::connect(&self.socket).map_err(|e| DesktopError::Hyprland(format!("socket: {e}")))?;
-        let _ = stream.set_read_timeout(Some(TIMEOUT));
-        let _ = stream.set_write_timeout(Some(TIMEOUT));
-        stream.write_all(request.as_bytes()).map_err(|e| DesktopError::Hyprland(format!("socket write: {e}")))?;
-        let _ = stream.shutdown(Shutdown::Write);
-        let mut buf = Vec::new();
-        let mut tmp = [0u8; 8192];
-        loop {
-            match stream.read(&mut tmp) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if buf.len().saturating_add(n) > MAX_REPLY {
-                        return Err(DesktopError::Hyprland("reply is too large".into()));
-                    }
-                    buf.extend_from_slice(&tmp[..n]);
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock => {
-                    if buf.is_empty() {
-                        return Err(DesktopError::Hyprland("no answer from the socket".into()));
-                    }
-                    // The reply arrived and the server left the socket open.
-                    break;
-                }
-                Err(e) => return Err(DesktopError::Hyprland(format!("socket read: {e}"))),
-            }
-        }
-        String::from_utf8(buf).map_err(|_| DesktopError::Hyprland("reply was not utf-8".into()))
+    /// Socket round-trip on the runtime's blocking pool, so an async worker is not stuck on it.
+    async fn command(&self, request: &str) -> Result<String, DesktopError> {
+        let socket = self.socket.clone();
+        let request = request.to_string();
+        tokio::task::spawn_blocking(move || read_socket(&socket, &request))
+            .await
+            .map_err(|e| DesktopError::Hyprland(format!("socket task: {e}")))?
     }
+}
+
+/// Writes one command and reads the reply. The request is a fixed command or an address
+/// and integers checked by [`is_window_address`]; it never contains a window title.
+fn read_socket(socket: &Path, request: &str) -> Result<String, DesktopError> {
+    use std::io::{Read, Write};
+    use std::net::Shutdown;
+    use std::os::unix::net::UnixStream;
+    let mut stream = UnixStream::connect(socket).map_err(|e| DesktopError::Hyprland(format!("socket: {e}")))?;
+    let _ = stream.set_read_timeout(Some(TIMEOUT));
+    let _ = stream.set_write_timeout(Some(TIMEOUT));
+    stream.write_all(request.as_bytes()).map_err(|e| DesktopError::Hyprland(format!("socket write: {e}")))?;
+    let _ = stream.shutdown(Shutdown::Write);
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 8192];
+    loop {
+        match stream.read(&mut tmp) {
+            Ok(0) => break,
+            Ok(n) => {
+                if buf.len().saturating_add(n) > MAX_REPLY {
+                    return Err(DesktopError::Hyprland("reply is too large".into()));
+                }
+                buf.extend_from_slice(&tmp[..n]);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock => {
+                if buf.is_empty() {
+                    return Err(DesktopError::Hyprland("no answer from the socket".into()));
+                }
+                // The reply arrived and the server left the socket open.
+                break;
+            }
+            Err(e) => return Err(DesktopError::Hyprland(format!("socket read: {e}"))),
+        }
+    }
+    String::from_utf8(buf).map_err(|_| DesktopError::Hyprland("reply was not utf-8".into()))
 }
 
 fn socket_path() -> Result<PathBuf, DesktopError> {
@@ -280,13 +304,12 @@ fn logical_len(px: i32, scale: f64) -> i32 {
 
 /// Top-left of a window of `window` size, centred on `monitor`'s work area, `margin_bottom`
 /// logical pixels above the bottom of that area (above a bottom bar and the Dock gap).
-/// A top bar is both added to the work-area origin and subtracted from its height, so it does
-/// not move this bottom edge. Waybar on Omarchy sits at the top.
+/// A top bar (Waybar on Omarchy) does not move this bottom edge.
 pub fn pill_top_left(monitor: &Monitor, window: (i32, i32), margin_bottom: i32) -> (i32, i32) {
     let (logical_w, logical_h) = monitor.logical_size();
-    let bottom = monitor.reserved[1].max(0);
-    let left = monitor.reserved[2].max(0);
-    let right = monitor.reserved[3].max(0);
+    let left = monitor.reserved.left.max(0);
+    let right = monitor.reserved.right.max(0);
+    let bottom = monitor.reserved.bottom.max(0);
     let span = logical_w.saturating_sub(left).saturating_sub(right);
     let x = monitor.x.saturating_add(left) + (span - window.0) / 2;
     let bottom_edge = monitor.y.saturating_add(logical_h).saturating_sub(bottom);
@@ -315,8 +338,13 @@ pub fn parse_active_window(body: &str) -> Result<Option<WindowRef>, DesktopError
     Ok(window_ref(&client))
 }
 
-pub fn window_by_title(body: &str, title: &str) -> Result<Option<MappedWindow>, DesktopError> {
-    Ok(parse_clients(body)?.into_iter().find(|c| c.title == title).and_then(|c| mapped(&c)))
+/// Our window with this title: the pid Hyprland recorded for the client, our app id, and the title.
+/// A foreign window that only copies the title does not match.
+pub fn own_window(body: &str, title: &str, pid: i64, class: &str) -> Result<Option<MappedWindow>, DesktopError> {
+    Ok(parse_clients(body)?
+        .into_iter()
+        .find(|c| c.pid == pid && c.class == class && c.title == title)
+        .and_then(|c| mapped(&c)))
 }
 
 fn parse_clients(body: &str) -> Result<Vec<RawClient>, DesktopError> {
@@ -382,6 +410,9 @@ struct RawClient {
     size: Vec<f64>,
     #[serde(default)]
     floating: bool,
+    /// Process id Hyprland took from the client. Absent or null stays 0, which is not us.
+    #[serde(default)]
+    pid: i64,
 }
 
 #[derive(Deserialize)]
@@ -408,10 +439,9 @@ fn one() -> f64 {
 
 impl From<RawMonitor> for Monitor {
     fn from(raw: RawMonitor) -> Self {
-        let mut reserved = [0; 4];
-        for (i, v) in raw.reserved.into_iter().take(4).enumerate() {
-            reserved[i] = v;
-        }
+        let z = raw.reserved;
+        let at = |i: usize| z.get(i).copied().unwrap_or(0);
+        // hyprctl: reserved is [left, top, right, bottom].
         Self {
             x: raw.x,
             y: raw.y,
@@ -419,7 +449,7 @@ impl From<RawMonitor> for Monitor {
             height: raw.height,
             scale: raw.scale,
             focused: raw.focused,
-            reserved,
+            reserved: Reserved { left: at(0), top: at(1), right: at(2), bottom: at(3) },
         }
     }
 }
@@ -476,38 +506,48 @@ mod tests {
     }
 
     #[test]
-    fn title_match_returns_geometry_without_the_title() {
+    fn own_window_needs_pid_and_class_not_only_the_title() {
         let body = r#"[
-            {"address":"0x11","class":"kitty","title":"zsh","at":[0,0],"size":[80,24],"floating":false},
-            {"address":"0x22","class":"com.engfors.tyst","title":"Tyst Dictation","at":[10,20],"size":[560,168],"floating":true}
+            {"address":"0x11","class":"kitty","title":"Tyst Dictation","pid":9,"at":[0,0],"size":[80,24],"floating":false},
+            {"address":"0x22","class":"tyst","title":"Tyst Dictation","pid":42,"at":[1,2],"size":[3,4],"floating":false},
+            {"address":"0x33","class":"com.engfors.tyst","title":"Tyst Meeting","pid":42,"at":[5,6],"size":[7,8],"floating":true},
+            {"address":"0x44","class":"com.engfors.tyst","title":"Tyst Dictation","pid":42,"at":[10,20],"size":[560,168],"floating":true}
         ]"#;
-        let w = window_by_title(body, "Tyst Dictation").unwrap().unwrap();
-        assert_eq!(w.id, "0x22");
+        let w = own_window(body, "Tyst Dictation", 42, "com.engfors.tyst").unwrap().unwrap();
+        assert_eq!(w.id, "0x44");
         assert_eq!(w.class, "com.engfors.tyst");
         assert_eq!(w.at, (10, 20));
         assert_eq!(w.size, (560, 168));
         assert!(w.floating);
         assert!(!format!("{w:?}").contains("Tyst Dictation"));
-        assert!(window_by_title(body, "missing").unwrap().is_none());
+        assert_eq!(own_window(body, "Tyst Dictation", 9, "kitty").unwrap().unwrap().id, "0x11");
+        // Same pid and title as ours, but the class is only the binary name.
+        assert!(own_window(body, "Tyst Dictation", 42, "org.example.other").unwrap().is_none());
+        assert!(own_window(body, "Tyst Dictation", 7, "com.engfors.tyst").unwrap().is_none());
+        assert!(own_window(body, "missing", 42, "com.engfors.tyst").unwrap().is_none());
     }
 
-    fn monitor(x: i32, y: i32, width: i32, height: i32, scale: f64, reserved: [i32; 4], focused: bool) -> Monitor {
+    fn monitor(x: i32, y: i32, width: i32, height: i32, scale: f64, reserved: Reserved, focused: bool) -> Monitor {
         Monitor { x, y, width, height, scale, focused, reserved }
     }
 
     #[test]
     fn pill_sits_bottom_centre_of_the_focused_monitor() {
-        let primary = monitor(0, 0, 1920, 1080, 1.0, [30, 0, 0, 0], true);
-        // A top bar does not move the bottom edge. 560×168 window, 48 px gap.
-        assert_eq!(pill_top_left(&primary, (560, 168), 48), (680, 864));
-        let with_bottom_bar = monitor(0, 0, 1920, 1080, 1.0, [0, 40, 0, 0], true);
-        assert_eq!(pill_top_left(&with_bottom_bar, (560, 168), 48), (680, 824));
+        let bare = monitor(0, 0, 1920, 1080, 1.0, Reserved::default(), true);
+        // 560×168 window, 48 px gap: (1920-560)/2 = 680, 1080-168-48 = 864.
+        assert_eq!(pill_top_left(&bare, (560, 168), 48), (680, 864));
+        // Omarchy's Waybar is a top exclusive zone. `reserved` is [left, top, right, bottom],
+        // so [0, 34, 0, 0] must not lift the pill the way a bottom bar would.
+        let waybar = monitor(0, 0, 1920, 1080, 1.0, Reserved { top: 34, ..Reserved::default() }, true);
+        assert_eq!(pill_top_left(&waybar, (560, 168), 48), (680, 864));
+        let bottom_bar = monitor(0, 0, 1920, 1080, 1.0, Reserved { bottom: 40, ..Reserved::default() }, true);
+        assert_eq!(pill_top_left(&bottom_bar, (560, 168), 48), (680, 824));
         // 3840×2160 at scale 2 is a 1920×1080 layout. The second monitor starts at x=1920.
-        let hidpi = monitor(1920, 0, 3840, 2160, 2.0, [0, 0, 0, 0], true);
+        let hidpi = monitor(1920, 0, 3840, 2160, 2.0, Reserved::default(), true);
         assert_eq!(pill_top_left(&hidpi, (560, 168), 48), (2600, 864));
         let monitors = [
-            monitor(0, 0, 1920, 1080, 1.0, [0, 0, 0, 0], false),
-            monitor(1920, 0, 1920, 1080, 1.0, [0, 0, 0, 0], true),
+            monitor(0, 0, 1920, 1080, 1.0, Reserved::default(), false),
+            monitor(1920, 0, 1920, 1080, 1.0, Reserved::default(), true),
         ];
         assert_eq!(focused_monitor(&monitors).unwrap().x, 1920);
         assert!(on_a_monitor(&monitors, 2000, 10));
@@ -515,12 +555,11 @@ mod tests {
     }
 
     #[test]
-    fn monitors_json_uses_logical_reserved_zones() {
-        let body = r#"[{"name":"DP-1","width":1920,"height":1080,"x":0,"y":0,"scale":1.0,"focused":true,"reserved":[30,0,0,0],"refreshRate":60.0}]"#;
+    fn monitors_json_reserved_is_left_top_right_bottom() {
+        let body = r#"[{"name":"DP-1","width":1920,"height":1080,"x":0,"y":0,"scale":1.0,"focused":true,"reserved":[0,34,0,0],"refreshRate":60.0}]"#;
         let monitors = parse_monitors(body).unwrap();
-        assert_eq!(monitors.len(), 1);
-        assert!(monitors[0].focused);
-        assert_eq!(monitors[0].reserved, [30, 0, 0, 0]);
+        assert_eq!(monitors[0].reserved, Reserved { top: 34, ..Reserved::default() });
         assert_eq!(monitors[0].logical_size(), (1920, 1080));
+        assert_eq!(pill_top_left(&monitors[0], (560, 168), 48), (680, 864));
     }
 }

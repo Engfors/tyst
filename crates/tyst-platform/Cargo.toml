@@ -38,7 +38,7 @@ arboard = { version = "3.6", optional = true, default-features = false, features
 ashpd = { version = "0.13", optional = true, default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast"] }
 zbus = { version = "5", optional = true, default-features = false, features = ["tokio"] }
 futures-util = { version = "0.3", optional = true, default-features = false }
-tokio = { version = "1", optional = true, features = ["sync", "time", "macros"] }
+tokio = { version = "1", optional = true, features = ["sync", "time", "macros", "rt"] }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 

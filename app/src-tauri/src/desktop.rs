@@ -70,17 +70,14 @@ pub fn compositor_manages_windows() -> bool {
 }
 
 /// The meeting window's top-left in the compositor's coordinates, if this desktop records one.
+#[cfg(target_os = "linux")]
 pub fn stored_meeting_origin(meetings: &crate::config::MeetingSettings) -> Option<(i32, i32)> {
-    #[cfg(target_os = "linux")]
-    {
-        if tyst_platform::kwin::is_kde() {
-            return meetings.kwin_position;
-        }
-        if tyst_platform::hyprland::is_hyprland() {
-            return meetings.hypr_position;
-        }
+    if tyst_platform::kwin::is_kde() {
+        return meetings.kwin_position;
     }
-    let _ = meetings;
+    if tyst_platform::hyprland::is_hyprland() {
+        return meetings.hypr_position;
+    }
     None
 }
 
@@ -161,7 +158,7 @@ impl Desktop {
         }
         let mut h = self.hyprland.lock().await;
         if h.is_none() {
-            match tyst_platform::hyprland::Hyprland::connect() {
+            match tyst_platform::hyprland::Hyprland::connect(crate::shortcuts::APP_ID) {
                 Ok(c) => *h = Some(std::sync::Arc::new(c)),
                 Err(e) => log::warn!("Hyprland IPC unavailable: {e}"),
             }
@@ -183,6 +180,7 @@ impl Desktop {
                     .map(TrackedWindow::Kwin)
             } else if let Some(h) = self.hyprland().await {
                 h.active_window()
+                    .await
                     .unwrap_or_else(|e| {
                         log::warn!("active window: {e}");
                         None
@@ -212,7 +210,7 @@ impl Desktop {
                 let placed = if let Some(k) = self.kwin().await {
                     k.place_bottom_center(windows::PILL_TITLE, windows::PILL_BOTTOM as i32, focus).await
                 } else if let Some(h) = self.hyprland().await {
-                    h.place_bottom_center(windows::PILL_TITLE, windows::PILL_BOTTOM as i32, focus)
+                    h.place_bottom_center(windows::PILL_TITLE, windows::PILL_BOTTOM as i32, focus).await
                 } else {
                     break;
                 };
@@ -236,7 +234,7 @@ impl Desktop {
         let (hypr, pos) = if let Some(k) = self.kwin().await {
             (false, k.position(windows::MEETING_TITLE).await)
         } else if let Some(h) = self.hyprland().await {
-            (true, h.position(windows::MEETING_TITLE))
+            (true, h.position(windows::MEETING_TITLE).await)
         } else {
             return;
         };
@@ -264,7 +262,7 @@ impl Desktop {
             let moved = if let Some(k) = self.kwin().await {
                 k.move_to(windows::MEETING_TITLE, x, y).await
             } else if let Some(h) = self.hyprland().await {
-                h.move_to(windows::MEETING_TITLE, x, y)
+                h.move_to(windows::MEETING_TITLE, x, y).await
             } else {
                 return;
             };
@@ -286,7 +284,7 @@ impl Desktop {
     pub async fn focus_meeting_window(&self) {
         let Some(h) = self.hyprland().await else { return };
         for _ in 0..10 {
-            match h.focus_title(windows::MEETING_TITLE) {
+            match h.focus_title(windows::MEETING_TITLE).await {
                 Ok(true) => return,
                 Ok(false) => tokio_sleep(Duration::from_millis(20)).await,
                 Err(e) => {
@@ -307,7 +305,7 @@ impl Desktop {
                     None => return,
                 },
                 TrackedWindow::Hyprland(w) => match self.hyprland().await {
-                    Some(h) => h.activate(&w.id),
+                    Some(h) => h.activate(&w.id).await,
                     None => return,
                 },
             };

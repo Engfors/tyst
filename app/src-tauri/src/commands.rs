@@ -208,11 +208,12 @@ pub fn config_set(app: AppHandle, config: Config) -> CmdResult {
     if config.threads != old.threads || config.models_dir != old.models_dir {
         st.unload_runtime();
     }
-    // Window geometry, compositor positions, the paste consent token and the last dictation
-    // language are owned by the app, not the settings form.
+    // Window geometry, the Hyprland meeting position, the paste consent token and the last
+    // dictation language are owned by the app, not the settings form. Keeping `hypr_position`
+    // here is required: a settings save otherwise writes back the form's copy and drops the
+    // corner Hyprland just reported. `kwin_position` still round-trips with the form, as before.
     let mut config = config;
     config.meetings.window = old.meetings.window.clone();
-    config.meetings.kwin_position = old.meetings.kwin_position;
     config.meetings.hypr_position = old.meetings.hypr_position;
     config.dictation.keyboard_token = old.dictation.keyboard_token.clone();
     config.dictation.keyboard_access = old.dictation.keyboard_access;
