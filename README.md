@@ -112,34 +112,51 @@ start: right-click Tyst.app, choose Open, and confirm. It needs macOS 14.4 or ne
 ### Omarchy (Hyprland)
 
 Tyst talks to Hyprland over its IPC socket (the same data as `hyprctl activewindow`) for the
-active window, paste-back, the dictation pill and the meeting window's position. Window rules
-use the syntax Hyprland **0.53** introduced (`windowrule` with `match:title`, `float = on`,
-`pin = on`, `no_initial_focus = on`, `border_size = 0`). Older `windowrulev2` / `nofocus` /
-`noborder` lines are not written.
+active window, paste-back, the dictation pill and the meeting window's position. On Hyprland
+0.56 with a Lua config (current Omarchy), dispatches use `hl.dsp.*`. Older classic configs
+still get `focuswindow` and `movewindowpixel`; if those are rejected as Lua, Tyst switches.
 
-Tyst writes `~/.config/tyst/hyprland.conf` (`$XDG_CONFIG_HOME/tyst/hyprland.conf` when that is
-set) and reloads Hyprland. It does not edit your Hyprland config. Add this line to the config
-you already edit, reload Hyprland, and restart Tyst so the windows map under the rules:
+Tyst writes two rule files and does not edit your Hyprland config:
+
+- `~/.config/tyst/hyprland.lua` (`hl.window_rule`, Hyprland 0.56). Omarchy's `o.window` is a
+  helper around the same rules; this file does not call it, so it loads without `o`. In
+  `~/.config/hypr/hyprland.lua`, after `require("default.hypr.omarchy")`:
+
+```lua
+dofile((os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")) .. "/tyst/hyprland.lua")
+```
+
+- `~/.config/tyst/hyprland.conf` for a classic config (Hyprland 0.53+, `windowrule` with
+  `match:title`). `source =` is invalid in a Lua-only config.
 
 ```
 source = ~/.config/tyst/hyprland.conf
 ```
 
-`no_initial_focus` keeps a newly shown window from taking the keyboard. The "Name this meeting"
-field can still be focused. The pill is placed at the bottom centre of the focused monitor.
+Reload Hyprland and restart Tyst so the windows map under the rules. Rules match the window
+title. `no_initial_focus` keeps a newly shown window from taking the keyboard. The "Name this
+meeting" field can still be focused. The pill is placed at the bottom centre of the focused
+monitor.
 
 Paste uses `wtype` (Ctrl+V, Ctrl+Shift+V in a terminal), which Omarchy ships. `ydotool` is the
 fallback. The previous clipboard text is restored the same way as on KDE. Shortcuts use the
-GlobalShortcuts portal. If that does not bind a key, add:
+GlobalShortcuts portal. If that does not bind a key, a classic config uses:
 
 ```
 bind = CTRL, aring, exec, tyst --dictate
 bind = CTRL SHIFT, aring, exec, tyst --toggle-meeting
 ```
 
+On Omarchy's Lua config the same fallback is:
+
+```lua
+o.bind("CTRL + aring", "Dictate", "tyst --dictate")
+o.bind("CTRL + SHIFT + aring", "Meeting", "tyst --toggle-meeting")
+```
+
 Use the real path to the binary when `tyst` is not on `PATH`. The tray icon is a
-StatusNotifierItem; Waybar's tray module (top right on Omarchy) shows it. The AppImage needs
-FUSE 3: `sudo pacman -S fuse3`.
+StatusNotifierItem. On Omarchy the tray host is quickshell. The AppImage needs FUSE 3:
+`sudo pacman -S fuse3`.
 
 ### Troubleshooting (Linux)
 

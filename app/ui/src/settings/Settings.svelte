@@ -46,7 +46,7 @@
       await api.installWindowRule();
       status =
         view?.compositor === "hyprland"
-          ? `Wrote ${view.config_dir}/hyprland.conf. Source it from hyprland.conf if you have not.`
+          ? `Wrote ${view.config_dir}/hyprland.lua and hyprland.conf. Load the lua file from hyprland.lua if you have not.`
           : "Window rule installed.";
     } catch (e) {
       status = errorText(e);
@@ -208,7 +208,10 @@
             {#if info?.shortcuts.bound.length}
               <ul class="bound">
                 {#each info.shortcuts.bound as [id, trigger]}
-                  <li>{shortcutNames[id] ?? id}: <b>{trigger || "not assigned"}</b></li>
+                  <li>
+                    {shortcutNames[id] ?? id}:
+                    <b>{trigger || (view.compositor === "hyprland" ? "registered (desktop did not name the key)" : "not assigned")}</b>
+                  </li>
                 {/each}
               </ul>
             {:else if info?.shortcuts.pending}
@@ -319,8 +322,9 @@
               <button onclick={installRules}>Reinstall</button>
               <span class="muted small">Floats the meeting window and the pill, pins them, and keeps them from taking focus when they appear. The name field can still be typed in.</span>
             </div>
-            <span class="muted small">Tyst writes <span class="mono">{view.config_dir}/hyprland.conf</span> and does not edit hyprland.conf. Add this line, reload Hyprland, and restart Tyst:</span>
-            <pre class="mono notes">source = {view.config_dir}/hyprland.conf</pre>
+            <span class="muted small">Tyst writes the rules and does not edit your Hyprland config. On Omarchy, add this in <span class="mono">~/.config/hypr/hyprland.lua</span> after <span class="mono">require("default.hypr.omarchy")</span>, then reload and restart Tyst:</span>
+            <pre class="mono notes">dofile("{view.config_dir}/hyprland.lua")</pre>
+            <span class="muted small">That file calls <span class="mono">hl.window_rule</span> (Hyprland 0.56). Omarchy's <span class="mono">o.window</span> is a helper around the same rules; the file does not need it. A classic config, not Lua, uses <span class="mono">source = {view.config_dir}/hyprland.conf</span> instead.</span>
           </div>
         {:else if view.platform === "linux"}
           <div class="field">

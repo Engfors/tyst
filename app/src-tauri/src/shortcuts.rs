@@ -119,7 +119,18 @@ mod linux {
                 move |bound| {
                     log::info!(
                         "global shortcuts bound: {}",
-                        bound.iter().map(|b| format!("{}={}", b.id, b.trigger)).collect::<Vec<_>>().join(", ")
+                        bound
+                            .iter()
+                            .map(|b| {
+                                let key = if b.trigger.is_empty() {
+                                    "(no key description from the portal)"
+                                } else {
+                                    b.trigger.as_str()
+                                };
+                                format!("{}={key}", b.id)
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     );
                     set_status(&bound_app, |s| {
                         s.pending = false;

@@ -401,18 +401,22 @@ and does not edit the user's Hyprland config; the user adds `source = <that file
 
 - **Rules:** float, pin (above other windows, every workspace), `no_initial_focus` (a newly shown
   window does not take the keyboard; the name field can still be focused), `border_size = 0`.
-  Matched on the app id and the window title (`Tyst Meeting`, `Tyst Dictation`).
+  Matched on the window title (`Tyst Meeting`, `Tyst Dictation`). The Wayland app id follows
+  the GTK program name (`tyst`) unless `enableGTKAppId` is set, which it is not, so rules do
+  not match on class. Omarchy (Hyprland 0.56 Lua) loads `hyprland.lua` via `dofile` (`hl.window_rule`);
+  a classic config `source`s `hyprland.conf`.
 - **IPC:** active window address and class (paste-back and terminal detection), focus that
   window, place the pill at the bottom centre of the focused monitor, read and restore the
-  meeting window position. Our own windows are the ones with this process's pid and app id, not
-  a matching title alone. Coordinates are Hyprland's global layout (logical pixels). Monitor
-  `reserved` is `[left, top, right, bottom]`; a top bar does not move the pill's bottom edge.
+  meeting window position. Our own windows are this process's pid plus the title. Dispatch uses
+  classic syntax, and `hl.dsp.*` when a Lua config rejects it. Coordinates are Hyprland's global
+  layout (logical pixels). Monitor `reserved` is `[left, top, right, bottom]`; a top bar does
+  not move the pill's bottom edge.
 - **Paste:** xdg-desktop-portal-hyprland has GlobalShortcuts and no RemoteDesktop. Paste is
   `wtype` (Ctrl+V, Ctrl+Shift+V in a terminal), then `ydotool`. Clipboard save-and-restore is
   unchanged.
-- **Shortcuts and tray:** the existing GlobalShortcuts portal and the StatusNotifierItem tray
-  (Waybar's tray module). If the portal does not bind a key, a Hyprland `bind` for
-  `tyst --dictate` and `tyst --toggle-meeting`.
+- **Shortcuts and tray:** the existing GlobalShortcuts portal and the StatusNotifierItem tray.
+  On Omarchy the tray host is quickshell. If the portal does not name a key, a Hyprland `bind`
+  or Omarchy `o.bind` for `tyst --dictate` and `tyst --toggle-meeting`.
 - **AppImage:** needs FUSE 3 (`pacman -S fuse3`), same as §10.2's `fusermount3` requirement.
 
 ---

@@ -1,9 +1,9 @@
 //! Menu bar / system tray (SPEC 8.2): the app's only permanent presence (no Dock icon, no
 //! taskbar entry). The icon shows idle, recording, paused, dictating or error.
 //!
-//! Linux uses Tauri's tray icon, a StatusNotifierItem via libayatana-appindicator. Waybar's
-//! `tray` module is a StatusNotifierWatcher, so the icon, tooltip and menu (left click) show in
-//! the bar. Omarchy puts that module at the top right. No Hyprland-specific tray path.
+//! Linux uses Tauri's tray icon, a StatusNotifierItem via libayatana-appindicator. Any
+//! StatusNotifierWatcher shows the icon, tooltip and menu. On Omarchy that host is quickshell,
+//! not Waybar. No Hyprland-specific tray path.
 
 use std::sync::Mutex;
 

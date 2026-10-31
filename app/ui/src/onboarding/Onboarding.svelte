@@ -125,7 +125,7 @@
       {#if view.platform === "macos"}
         <p class="muted small">macOS asks for Microphone access the first time. If it was denied, allow Tyst in System Settings › Privacy &amp; Security › Microphone.</p>
       {:else if view.compositor === "hyprland"}
-        <p class="muted small">On Linux, PipeWire normally needs no permission. Tyst writes Hyprland window rules to <span class="mono">{view.config_dir}/hyprland.conf</span>. Add <span class="mono">source = {view.config_dir}/hyprland.conf</span> to your Hyprland config so the meeting window and the pill float, stay on top and do not take focus. Typing a meeting name still works. Restart Tyst after adding the line.</p>
+        <p class="muted small">On Linux, PipeWire normally needs no permission. On Omarchy, add <span class="mono">dofile("{view.config_dir}/hyprland.lua")</span> in <span class="mono">~/.config/hypr/hyprland.lua</span> after <span class="mono">require("default.hypr.omarchy")</span> so the meeting window and the pill float, stay on top and do not take focus. Typing a meeting name still works. A classic Hyprland config uses <span class="mono">source = {view.config_dir}/hyprland.conf</span> instead. Restart Tyst after adding the line.</p>
       {:else}
         <p class="muted small">On Linux, PipeWire normally needs no permission. On KDE, Tyst adds a window rule so the meeting window stays on top without taking focus.</p>
       {/if}
@@ -137,7 +137,7 @@
           <button onclick={setupShortcuts}>Set up shortcuts</button>
           <span class="result">
             {#if info?.shortcuts.error}{info.shortcuts.error}
-            {:else if info?.shortcuts.bound.length}{info.shortcuts.bound.map(([id, t]) => `${id === "dictate" ? "Dictate" : "Meeting"}: ${t || "not assigned"}`).join(" · ")}
+            {:else if info?.shortcuts.bound.length}{info.shortcuts.bound.map(([id, t]) => `${id === "dictate" ? "Dictate" : "Meeting"}: ${t || (view?.compositor === "hyprland" ? "registered (key not named)" : "not assigned")}`).join(" · ")}
             {:else if info?.shortcuts.pending}Confirm the keys in the dialog…{/if}
           </span>
         </div>

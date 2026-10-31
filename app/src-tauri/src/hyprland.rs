@@ -2,10 +2,10 @@
 //! and the dictation pill.
 //!
 //! Wayland clients cannot keep themselves above other windows, refuse focus on show, or position
-//! themselves. Hyprland does it from a rules file Tyst writes and the user's config `source`s.
-//! Tyst never edits `hyprland.conf`. The syntax is the one Hyprland 0.53 introduced
-//! (`windowrulev2`, `nofocus` and `noborder` are gone; see the Hyprland window-rules wiki).
-//! Omarchy moved to that syntax in its 0.53 config migration.
+//! themselves. Hyprland does it from a rules file Tyst writes and the user loads. Tyst never
+//! edits the user's Hyprland config. Classic configs (Hyprland 0.53+) `source` `hyprland.conf`.
+//! Omarchy's Lua config (Hyprland 0.56) cannot `source` that file; it `dofile`s `hyprland.lua`,
+//! which calls upstream `hl.window_rule`. Omarchy's `o.window` is a helper around the same rules.
 //!
 //! `no_initial_focus` keeps a newly shown window from taking the keyboard. `no_focus` is not
 //! set: it would block typing into "Name this meeting". IPC ([`tyst_platform::hyprland`]) places
@@ -30,24 +30,32 @@ pub fn rules_path() -> PathBuf {
     crate::config::config_dir().join("hyprland.conf")
 }
 
+pub fn lua_rules_path() -> PathBuf {
+    crate::config::config_dir().join("hyprland.lua")
+}
+
+/// Line to add in `~/.config/hypr/hyprland.lua` after `require("default.hypr.omarchy")`.
+pub fn omarchy_dofile(lua_path: &Path) -> String {
+    format!("dofile(\"{}\")", lua_path.display())
+}
+
 /// The rules file. `source_path` is the line the user adds to their own Hyprland config.
 pub fn rules_document(source_path: &Path) -> String {
     let path = source_path.display();
     format!(
         "\
-# Tyst window rules for Hyprland {RULES_SINCE} and newer
-# (https://wiki.hypr.land/Configuring/Window-Rules/).
+# Tyst window rules for a classic Hyprland {RULES_SINCE} config (and newer, until Lua-only).
+# https://wiki.hypr.land/Configuring/Window-Rules/
 #
-# Tyst never edits hyprland.conf. Add this line to the Hyprland config you edit
-# (on Omarchy, the local config it already loads) and reload Hyprland:
+# This file is not valid in a Lua-only config (current Omarchy). Use hyprland.lua there.
+# Tyst never edits your config. For a classic config, add:
 #
 #   source = {path}
 #
-# Restart Tyst afterwards so the windows map under these rules.
-# float and pin keep them above other windows on every workspace.
+# Rules match the window title. The Wayland app id is the GTK program name (`tyst` in
+# StartupWMClass) unless enableGTKAppId is set, which it is not, so the class is not matched.
 # no_initial_focus keeps a newly shown window from taking the keyboard.
 # no_focus is not set: it would block typing into \"Name this meeting\".
-# border_size 0 replaced noborder in Hyprland {RULES_SINCE}.
 
 {meeting}
 {pill}\
@@ -58,12 +66,10 @@ pub fn rules_document(source_path: &Path) -> String {
 }
 
 fn rule_block(name: &str, title: &str) -> String {
-    // Class and title both have to match. A title alone is not unique.
     format!(
         "\
 windowrule {{
     name = {name}
-    match:class = {class}
     match:title = {title_re}
 
     float = on
@@ -72,9 +78,65 @@ windowrule {{
     border_size = 0
 }}
 ",
-        class = re2_exact(crate::shortcuts::APP_ID),
         title_re = re2_exact(title),
     )
+}
+
+/// Hyprland 0.56 Lua rules (`hl.window_rule`). Omarchy's `o.window(match, effects)` is a local
+/// helper; this file calls the upstream function so it loads without `o`.
+pub fn lua_rules_document(dofile_path: &Path) -> String {
+    let line = omarchy_dofile(dofile_path);
+    format!(
+        "\
+-- Tyst window rules for Hyprland 0.56 Lua config.
+-- https://wiki.hypr.land/Configuring/Basics/Window-Rules/
+--
+-- Omarchy's o.window(match, effects) wraps the same rules. This file calls hl.window_rule
+-- so it does not depend on that helper.
+--
+-- In ~/.config/hypr/hyprland.lua, after require(\"default.hypr.omarchy\"):
+--
+--   {line}
+--
+-- A classic config should source hyprland.conf instead. This file is not a hyprland.conf.
+-- no_focus is not set: it would block typing into \"Name this meeting\".
+
+{meeting}
+{pill}\
+",
+        meeting = lua_rule("tyst-meeting-window", MEETING_TITLE),
+        pill = lua_rule("tyst-dictation-pill", PILL_TITLE),
+    )
+}
+
+fn lua_rule(name: &str, title: &str) -> String {
+    format!(
+        "\
+hl.window_rule({{
+  name = \"{name}\",
+  match = {{ title = \"{title}\" }},
+  float = true,
+  pin = true,
+  no_initial_focus = true,
+  border_size = 0,
+}})
+",
+        title = lua_string(&re2_exact(title)),
+    )
+}
+
+/// Escape a Lua double-quoted string.
+fn lua_string(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// A RE2 regex that matches `title` and nothing else. Hyprland expands `$NAME` only when a
@@ -99,10 +161,11 @@ pub fn install_rule() -> Result<(), String> {
         return Ok(());
     }
     let path = rules_path();
-    let text = rules_document(&path);
-    let changed = write_if_changed(&path, text.as_bytes())?;
+    let lua_path = lua_rules_path();
+    let changed = write_if_changed(&path, rules_document(&path).as_bytes())?;
+    let changed = write_if_changed(&lua_path, lua_rules_document(&lua_path).as_bytes())? || changed;
     if changed {
-        match tyst_platform::hyprland::Hyprland::connect(crate::shortcuts::APP_ID) {
+        match tyst_platform::hyprland::Hyprland::connect() {
             Ok(h) => {
                 // The socket read must not run on the UI thread. The process stays up, so the
                 // thread finishing after setup returns is fine.
@@ -120,9 +183,9 @@ pub fn install_rule() -> Result<(), String> {
         }
     }
     log::info!(
-        "Hyprland window rules: {} (add `source = {}` to hyprland.conf if it is not there)",
+        "Hyprland window rules: {} and {} (Omarchy: dofile the lua file from hyprland.lua)",
         path.display(),
-        path.display()
+        lua_path.display()
     );
     Ok(())
 }
@@ -147,11 +210,11 @@ mod tests {
         let doc = rules_document(Path::new("/home/me/.config/tyst/hyprland.conf"));
         assert!(doc.contains("Hyprland 0.53"));
         assert!(doc.contains("source = /home/me/.config/tyst/hyprland.conf"));
-        assert!(doc.contains("match:class = ^(com\\.engfors\\.tyst)$"));
         assert!(doc.contains("match:title = ^(Tyst Meeting)$"));
         assert!(doc.contains("match:title = ^(Tyst Dictation)$"));
         let effects: Vec<&str> = doc.lines().filter(|l| !l.trim_start().starts_with('#')).collect();
         let effects = effects.join("\n");
+        assert!(!effects.contains("match:class"));
         assert!(effects.contains("float = on"));
         assert!(effects.contains("pin = on"));
         assert!(effects.contains("no_initial_focus = on"));
@@ -160,6 +223,18 @@ mod tests {
         assert_eq!(re2_exact("a.b"), r"^(a\.b)$");
         assert!(BIND_HINT.contains("tyst --dictate"));
         assert!(BIND_HINT.contains("tyst --toggle-meeting"));
+        let lua_path = Path::new("/home/me/.config/tyst/hyprland.lua");
+        let lua = lua_rules_document(lua_path);
+        assert!(lua.contains("hl.window_rule({"));
+        assert!(lua.contains("title = \"^(Tyst Meeting)$\""));
+        assert!(lua.contains("title = \"^(Tyst Dictation)$\""));
+        assert!(lua.contains("float = true"));
+        assert!(lua.contains("no_initial_focus = true"));
+        assert!(lua.contains(&omarchy_dofile(lua_path)));
+        let lua_code: Vec<&str> = lua.lines().filter(|l| !l.trim_start().starts_with("--")).collect();
+        let lua_code = lua_code.join("\n");
+        assert!(!lua_code.contains("no_focus"));
+        assert!(!lua_code.contains("o.window"));
     }
 
     #[test]

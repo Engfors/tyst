@@ -5,8 +5,9 @@
 //! Wayland clients cannot do this themselves. The socket is the one `hyprctl` uses
 //! (`$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket.sock`). Commands are the same
 //! strings `hyprctl` writes; replies are read back and the connection closes. Our own windows
-//! are recognised by this process's pid and app id together with the title. A title on its own
-//! is not enough: another client can set the same title. Titles are matched locally and then
+//! are recognised by this process's pid together with the title. A title on its own is not
+//! enough: another client can set the same title. The Wayland class is not used: GTK sets it
+//! from the program name unless `enableGTKAppId` is on. Titles are matched locally and then
 //! dropped: they are never logged and never sent back to Hyprland.
 //!
 //! Coordinates are Hyprland's global layout space, the same space as a client's `at` field and
@@ -105,22 +106,30 @@ pub fn is_window_address(id: &str) -> bool {
     !hex.is_empty() && hex.len() <= 16 && hex.chars().all(|c| c.is_ascii_hexdigit()) && hex.chars().any(|c| c != '0')
 }
 
+/// Which `dispatch` grammar this compositor accepts. Hyprland 0.56 with a Lua config rejects
+/// the classic `focuswindow` / `movewindowpixel` lines (`hl.dispatch(...): ')' expected near ...`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DispatchKind {
+    Classic,
+    Lua,
+}
+
 pub struct Hyprland {
     socket: PathBuf,
     /// This process. Hyprland reports it from the client credentials, which another window cannot set.
     pid: i64,
-    /// Wayland app id (`com.engfors.tyst`). Matched with the pid and the title.
-    class: String,
+    /// Learned from the first dispatch. `None` until a command has been tried.
+    dispatch: std::sync::Mutex<Option<DispatchKind>>,
 }
 
 impl Hyprland {
-    /// Connects if the instance socket exists. `class` is this app's Wayland app id.
-    pub fn connect(class: &str) -> Result<Self, DesktopError> {
+    /// Connects if the instance socket exists.
+    pub fn connect() -> Result<Self, DesktopError> {
         let socket = socket_path()?;
         if !socket.exists() {
             return Err(DesktopError::Hyprland(format!("no socket at {}", socket.display())));
         }
-        Ok(Self { socket, pid: i64::from(std::process::id()), class: class.to_string() })
+        Ok(Self { socket, pid: i64::from(std::process::id()), dispatch: std::sync::Mutex::new(None) })
     }
 
     /// The focused window, if there is one. This is the paste target, so it is not limited to our pid.
@@ -194,7 +203,7 @@ impl Hyprland {
     }
 
     async fn own_window(&self, title: &str) -> Result<Option<MappedWindow>, DesktopError> {
-        own_window(&self.command("j/clients").await?, title, self.pid, &self.class)
+        own_window(&self.command("j/clients").await?, title, self.pid)
     }
 
     async fn monitors(&self) -> Result<Vec<Monitor>, DesktopError> {
@@ -202,20 +211,49 @@ impl Hyprland {
     }
 
     async fn move_window(&self, window: &MappedWindow, x: i32, y: i32) -> Result<(), DesktopError> {
-        // A tiled window ignores `movewindowpixel`. Float first when the rules have not
-        // (a sourced rules file floats it on map; this covers the run before that).
+        // A tiled window ignores a move. Float first when the rules have not
+        // (a loaded rules file floats it on map; this covers the run before that).
+        let Some((float_classic, float_lua)) = float_commands(&window.id) else {
+            return Err(DesktopError::Hyprland("window address is not usable".into()));
+        };
+        let Some((move_classic, move_lua)) = move_commands(&window.id, x, y) else {
+            return Err(DesktopError::Hyprland("window address is not usable".into()));
+        };
         if !window.floating {
-            self.dispatch(&format!("setfloating address:{}", window.id)).await?;
+            self.dispatch_either(&float_classic, &float_lua).await?;
         }
-        self.dispatch(&format!("movewindowpixel exact {x} {y},address:{}", window.id)).await?;
-        Ok(())
+        self.dispatch_either(&move_classic, &move_lua).await
     }
 
     async fn focus_address(&self, id: &str) -> Result<(), DesktopError> {
-        self.dispatch(&format!("focuswindow address:{id}")).await
+        let Some((classic, lua)) = focus_commands(id) else {
+            return Err(DesktopError::Hyprland("window address is not usable".into()));
+        };
+        self.dispatch_either(&classic, &lua).await
     }
 
-    async fn dispatch(&self, args: &str) -> Result<(), DesktopError> {
+    /// Sends `classic` (`focuswindow`, `movewindowpixel`, …). If this compositor's Lua config
+    /// rejects that grammar, sends `lua` (`hl.dsp.*`) and keeps that choice.
+    async fn dispatch_either(&self, classic: &str, lua: &str) -> Result<(), DesktopError> {
+        let known = *self.dispatch.lock().expect("dispatch kind");
+        match known {
+            Some(DispatchKind::Lua) => self.dispatch_raw(lua).await,
+            Some(DispatchKind::Classic) => self.dispatch_raw(classic).await,
+            None => match self.dispatch_raw(classic).await {
+                Ok(()) => {
+                    *self.dispatch.lock().expect("dispatch kind") = Some(DispatchKind::Classic);
+                    Ok(())
+                }
+                Err(e) if classic_dispatch_rejected_by_lua(&e.to_string()) => {
+                    *self.dispatch.lock().expect("dispatch kind") = Some(DispatchKind::Lua);
+                    self.dispatch_raw(lua).await
+                }
+                Err(e) => Err(e),
+            },
+        }
+    }
+
+    async fn dispatch_raw(&self, args: &str) -> Result<(), DesktopError> {
         let reply = self.command(&format!("dispatch {args}")).await?;
         let line = reply.lines().next().unwrap_or("").trim();
         if line.is_empty() || line == "ok" {
@@ -338,13 +376,46 @@ pub fn parse_active_window(body: &str) -> Result<Option<WindowRef>, DesktopError
     Ok(window_ref(&client))
 }
 
-/// Our window with this title: the pid Hyprland recorded for the client, our app id, and the title.
-/// A foreign window that only copies the title does not match.
-pub fn own_window(body: &str, title: &str, pid: i64, class: &str) -> Result<Option<MappedWindow>, DesktopError> {
-    Ok(parse_clients(body)?
-        .into_iter()
-        .find(|c| c.pid == pid && c.class == class && c.title == title)
-        .and_then(|c| mapped(&c)))
+/// Our window with this title. The pid is the one Hyprland recorded for the client (it cannot
+/// be chosen by another process). The class is not required: GTK sets the Wayland app id from
+/// the program name unless Tauri's `enableGTKAppId` is on, and this app does not set that.
+pub fn own_window(body: &str, title: &str, pid: i64) -> Result<Option<MappedWindow>, DesktopError> {
+    Ok(parse_clients(body)?.into_iter().find(|c| c.pid == pid && c.title == title).and_then(|c| mapped(&c)))
+}
+
+/// Classic dispatcher argument, and the Hyprland 0.56 Lua form (`hl.dsp.focus`).
+pub fn focus_commands(address: &str) -> Option<(String, String)> {
+    if !is_window_address(address) {
+        return None;
+    }
+    Some((format!("focuswindow address:{address}"), format!("hl.dsp.focus({{ window = 'address:{address}' }})")))
+}
+
+/// Classic `movewindowpixel exact`, and `hl.dsp.window.move` (absolute: `relative` defaults to false).
+pub fn move_commands(address: &str, x: i32, y: i32) -> Option<(String, String)> {
+    if !is_window_address(address) {
+        return None;
+    }
+    Some((
+        format!("movewindowpixel exact {x} {y},address:{address}"),
+        format!("hl.dsp.window.move({{ window = 'address:{address}', x = {x}, y = {y} }})"),
+    ))
+}
+
+/// Classic `setfloating`, and `hl.dsp.window.float` with `action = 'set'`.
+pub fn float_commands(address: &str) -> Option<(String, String)> {
+    if !is_window_address(address) {
+        return None;
+    }
+    Some((
+        format!("setfloating address:{address}"),
+        format!("hl.dsp.window.float({{ window = 'address:{address}', action = 'set' }})"),
+    ))
+}
+
+/// True when a classic dispatcher was parsed as Lua (`hl.dispatch(...): ')' expected near ...`).
+pub fn classic_dispatch_rejected_by_lua(message: &str) -> bool {
+    message.contains("hl.dispatch") || message.contains("expected near")
 }
 
 fn parse_clients(body: &str) -> Result<Vec<RawClient>, DesktopError> {
@@ -506,25 +577,41 @@ mod tests {
     }
 
     #[test]
-    fn own_window_needs_pid_and_class_not_only_the_title() {
+    fn own_window_is_pid_and_title_even_when_the_class_is_tyst() {
         let body = r#"[
             {"address":"0x11","class":"kitty","title":"Tyst Dictation","pid":9,"at":[0,0],"size":[80,24],"floating":false},
-            {"address":"0x22","class":"tyst","title":"Tyst Dictation","pid":42,"at":[1,2],"size":[3,4],"floating":false},
-            {"address":"0x33","class":"com.engfors.tyst","title":"Tyst Meeting","pid":42,"at":[5,6],"size":[7,8],"floating":true},
-            {"address":"0x44","class":"com.engfors.tyst","title":"Tyst Dictation","pid":42,"at":[10,20],"size":[560,168],"floating":true}
+            {"address":"0x22","class":"tyst","title":"Tyst Dictation","pid":42,"at":[10,20],"size":[560,168],"floating":true},
+            {"address":"0x33","class":"tyst","title":"Tyst Meeting","pid":42,"at":[5,6],"size":[7,8],"floating":true}
         ]"#;
-        let w = own_window(body, "Tyst Dictation", 42, "com.engfors.tyst").unwrap().unwrap();
-        assert_eq!(w.id, "0x44");
-        assert_eq!(w.class, "com.engfors.tyst");
+        // GTK's program name is `tyst` (StartupWMClass). That window is ours when the pid matches.
+        let w = own_window(body, "Tyst Dictation", 42).unwrap().unwrap();
+        assert_eq!(w.id, "0x22");
+        assert_eq!(w.class, "tyst");
         assert_eq!(w.at, (10, 20));
         assert_eq!(w.size, (560, 168));
         assert!(w.floating);
         assert!(!format!("{w:?}").contains("Tyst Dictation"));
-        assert_eq!(own_window(body, "Tyst Dictation", 9, "kitty").unwrap().unwrap().id, "0x11");
-        // Same pid and title as ours, but the class is only the binary name.
-        assert!(own_window(body, "Tyst Dictation", 42, "org.example.other").unwrap().is_none());
-        assert!(own_window(body, "Tyst Dictation", 7, "com.engfors.tyst").unwrap().is_none());
-        assert!(own_window(body, "missing", 42, "com.engfors.tyst").unwrap().is_none());
+        assert_eq!(own_window(body, "Tyst Meeting", 42).unwrap().unwrap().id, "0x33");
+        assert_eq!(own_window(body, "Tyst Dictation", 9).unwrap().unwrap().id, "0x11");
+        assert!(own_window(body, "Tyst Dictation", 7).unwrap().is_none());
+        assert!(own_window(body, "missing", 42).unwrap().is_none());
+    }
+
+    #[test]
+    fn lua_dispatch_matches_hyprland_0_56_and_classic_is_the_fallback() {
+        let (classic, lua) = focus_commands("0xabc").unwrap();
+        assert_eq!(classic, "focuswindow address:0xabc");
+        assert_eq!(lua, "hl.dsp.focus({ window = 'address:0xabc' })");
+        let (classic, lua) = move_commands("0xabc", 680, 2543).unwrap();
+        assert_eq!(classic, "movewindowpixel exact 680 2543,address:0xabc");
+        assert_eq!(lua, "hl.dsp.window.move({ window = 'address:0xabc', x = 680, y = 2543 })");
+        let (classic, lua) = float_commands("0xabc").unwrap();
+        assert_eq!(classic, "setfloating address:0xabc");
+        assert_eq!(lua, "hl.dsp.window.float({ window = 'address:0xabc', action = 'set' })");
+        assert!(classic_dispatch_rejected_by_lua("dispatch failed: hl.dispatch(...): ')' expected near 'address'"));
+        assert!(classic_dispatch_rejected_by_lua("')' expected near 'exact'"));
+        assert!(!classic_dispatch_rejected_by_lua("dispatch failed: no window"));
+        assert!(focus_commands("0x0").is_none());
     }
 
     fn monitor(x: i32, y: i32, width: i32, height: i32, scale: f64, reserved: Reserved, focused: bool) -> Monitor {
@@ -542,6 +629,9 @@ mod tests {
         assert_eq!(pill_top_left(&waybar, (560, 168), 48), (680, 864));
         let bottom_bar = monitor(0, 0, 1920, 1080, 1.0, Reserved { bottom: 40, ..Reserved::default() }, true);
         assert_eq!(pill_top_left(&bottom_bar, (560, 168), 48), (680, 824));
+        // [left, top, right, bottom]: a left bar shifts the centre, it does not change the bottom edge.
+        let left_bar = monitor(0, 0, 1920, 1080, 1.0, Reserved { left: 80, ..Reserved::default() }, true);
+        assert_eq!(pill_top_left(&left_bar, (560, 168), 48), (720, 864));
         // 3840×2160 at scale 2 is a 1920×1080 layout. The second monitor starts at x=1920.
         let hidpi = monitor(1920, 0, 3840, 2160, 2.0, Reserved::default(), true);
         assert_eq!(pill_top_left(&hidpi, (560, 168), 48), (2600, 864));

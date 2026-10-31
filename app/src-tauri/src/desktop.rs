@@ -158,7 +158,7 @@ impl Desktop {
         }
         let mut h = self.hyprland.lock().await;
         if h.is_none() {
-            match tyst_platform::hyprland::Hyprland::connect(crate::shortcuts::APP_ID) {
+            match tyst_platform::hyprland::Hyprland::connect() {
                 Ok(c) => *h = Some(std::sync::Arc::new(c)),
                 Err(e) => log::warn!("Hyprland IPC unavailable: {e}"),
             }
