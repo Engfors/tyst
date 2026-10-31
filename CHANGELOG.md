@@ -5,10 +5,17 @@ for a version is the text of its GitHub release and of the update notice in Sett
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-31
+
+Omarchy (Hyprland) now gets the floating meeting window and dictation pill, and custom vocabulary
+can change what the model hears, not only how the text is spelled.
+
 Features
 - Omarchy / Hyprland: window rules for classic configs and for Hyprland 0.56 Lua (`hl.window_rule`),
   IPC that uses `hl.dsp.*` when classic dispatches are rejected, paste through `wtype` with
   `ydotool` as the fallback. The tray stays the existing StatusNotifierItem (quickshell on Omarchy).
+  Add `dofile("~/.config/tyst/hyprland.lua")` on Omarchy, or `source = ~/.config/tyst/hyprland.conf`
+  on a classic config, then reload Hyprland and restart Tyst.
 - Custom vocabulary now helps recognition, not only spelling: terms, and replacements that join
   words (`terra form → Terraform`), make the model more likely to hear them as written. Swedish
   (and auto) keep phrase boosting on by default; forced English (Parakeet) does not, after the

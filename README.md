@@ -5,7 +5,7 @@ including mixed-language meetings. Nothing leaves the device: Tyst only goes onl
 to download the speech models and, if you leave update checks on, to ask GitHub for the latest
 version.
 
-Status: **v0.1.1** (see [CHANGELOG.md](CHANGELOG.md)). All phases are accepted on
+Status: **v0.2.0** (see [CHANGELOG.md](CHANGELOG.md)). All phases are accepted on
 Linux, tested on Arch (KDE Plasma, Wayland, PipeWire); the Apple silicon build was tested on an M1 Max
 ([what was run](docs/phase5-report.md#9-macos-acceptance-m1-max-2026-10-05)). See [SPEC.md](SPEC.md)
 for the specification and the phase reports: [5](docs/phase5-report.md) (echo cancellation, meeting
