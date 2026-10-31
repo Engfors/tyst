@@ -392,6 +392,33 @@ General (launch at login, transcripts folder, speaker labels, language default) 
 - **CUDA EP:** optional, off by default; CPU on a 7800X3D is more than sufficient.
 - **Packaging:** AppImage via Tauri bundler; models live outside the AppImage (§5.2). `.desktop` file + icons.
 
+### 10.3 Omarchy — Hyprland
+
+Same audio path as §10.2 (PipeWire). The compositor integration is Hyprland's IPC socket instead
+of KWin, and window rules in the syntax Hyprland 0.53 introduced (Omarchy's config uses that
+syntax). Tyst writes `$XDG_CONFIG_HOME/tyst/hyprland.conf` (default `~/.config/tyst/hyprland.conf`)
+and does not edit the user's Hyprland config; the user adds `source = <that file>`.
+
+- **Rules:** float, pin (above other windows, every workspace), `no_initial_focus` (a newly shown
+  window does not take the keyboard; the name field can still be focused), `border_size = 0`.
+  Matched on class `tyst` (what `hyprctl clients -j` reports for the Settings and Meeting
+  windows on Omarchy) and the window title (`Tyst Meeting`, `Tyst Dictation`). Omarchy
+  (Hyprland 0.56 Lua) loads `hyprland.lua` via `dofile` (`hl.window_rule`); a classic config
+  `source`s `hyprland.conf`.
+- **IPC:** active window address and class (paste-back and terminal detection), focus that
+  window, place the pill at the bottom centre of the focused monitor, read and restore the
+  meeting window position. Our own windows are this process's pid plus the title. Dispatch uses
+  classic syntax, and `hl.dsp.*` when a Lua config rejects it. Coordinates are Hyprland's global
+  layout (logical pixels). Monitor `reserved` is `[left, top, right, bottom]`; a top bar does
+  not move the pill's bottom edge.
+- **Paste:** xdg-desktop-portal-hyprland has GlobalShortcuts and no RemoteDesktop. Paste is
+  `wtype` (Ctrl+V, Ctrl+Shift+V in a terminal), then `ydotool`. Clipboard save-and-restore is
+  unchanged.
+- **Shortcuts and tray:** the existing GlobalShortcuts portal and the StatusNotifierItem tray.
+  On Omarchy the tray host is quickshell. If the portal does not name a key, a Hyprland `bind`
+  or Omarchy `o.bind` for `tyst --dictate` and `tyst --toggle-meeting`.
+- **AppImage:** needs FUSE 3 (`pacman -S fuse3`), same as §10.2's `fusermount3` requirement.
+
 ---
 
 ## 11. Non-functional requirements

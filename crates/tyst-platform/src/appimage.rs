@@ -4,7 +4,7 @@
 //! `AppRun` prepends `$APPDIR` entries to `LD_LIBRARY_PATH`, `PATH`, `XDG_DATA_DIRS` and other
 //! search paths, and linuxdeploy's GTK hook sets `GTK_PATH`, `GIO_MODULE_DIR` and the like. Tyst
 //! itself needs that environment; programs it starts (`xdg-open` and the editor it opens,
-//! `kwriteconfig6`, `ydotool`) must not get it, or they load Tyst's bundled libraries and break
+//! `kwriteconfig6`, `ydotool`, `wtype`) must not get it, or they load Tyst's bundled libraries and break
 //! when Tyst quits and the image is unmounted. [`host_command`] starts a program with the
 //! environment the AppImage was started from: `$APPDIR` entries dropped from search paths (the
 //! launcher appends the original value after its own), launcher-only variables removed.

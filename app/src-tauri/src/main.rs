@@ -13,6 +13,8 @@ mod desktop;
 mod detect;
 mod dictation;
 #[cfg(target_os = "linux")]
+mod hyprland;
+#[cfg(target_os = "linux")]
 mod kwin;
 mod secrets;
 mod session;
@@ -127,6 +129,10 @@ fn main() {
             #[cfg(target_os = "linux")]
             if let Err(e) = kwin::install_rule() {
                 log::warn!("KWin rule: {e}");
+            }
+            #[cfg(target_os = "linux")]
+            if let Err(e) = hyprland::install_rule() {
+                log::warn!("Hyprland rules: {e}");
             }
             let cfg = handle.state::<AppState>().config();
             shortcuts::register(&handle);

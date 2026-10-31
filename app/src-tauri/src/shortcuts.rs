@@ -119,7 +119,18 @@ mod linux {
                 move |bound| {
                     log::info!(
                         "global shortcuts bound: {}",
-                        bound.iter().map(|b| format!("{}={}", b.id, b.trigger)).collect::<Vec<_>>().join(", ")
+                        bound
+                            .iter()
+                            .map(|b| {
+                                let key = if b.trigger.is_empty() {
+                                    "(no key description from the portal)"
+                                } else {
+                                    b.trigger.as_str()
+                                };
+                                format!("{}={key}", b.id)
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     );
                     set_status(&bound_app, |s| {
                         s.pending = false;
@@ -145,10 +156,7 @@ mod linux {
                 log::warn!("global shortcuts: {e}");
                 set_status(&app, |s| {
                     s.pending = false;
-                    s.error = Some(format!(
-                        "{e}. Tyst needs the desktop's GlobalShortcuts portal (KDE Plasma 6, GNOME 48 or newer); \
-                         meanwhile bind `tyst --dictate` to a key yourself."
-                    ));
+                    s.error = Some(shortcut_error(&e.to_string()));
                 });
             }
         });
@@ -182,6 +190,19 @@ mod linux {
             }
         }
         Ok(())
+    }
+
+    /// What to show when the portal session ends. Hyprland's portal implements GlobalShortcuts,
+    /// but not every setup shows the KDE-style binding dialog, so the hint is a `bind` line.
+    fn shortcut_error(error: &str) -> String {
+        if tyst_platform::hyprland::is_hyprland() {
+            format!("{error}. If no key was bound, add to hyprland.conf:\n{}", crate::hyprland::BIND_HINT)
+        } else {
+            format!(
+                "{error}. Tyst needs the desktop's GlobalShortcuts portal (KDE Plasma 6, GNOME 48 or newer); \
+                 meanwhile bind `tyst --dictate` to a key yourself."
+            )
+        }
     }
 
     const ICON: &[u8] = include_bytes!("../icons/128x128.png");

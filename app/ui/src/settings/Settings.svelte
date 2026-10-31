@@ -41,6 +41,18 @@
     info = await api.dictationInfo().catch(() => null);
   }
 
+  async function installRules() {
+    try {
+      await api.installWindowRule();
+      status =
+        view?.compositor === "hyprland"
+          ? `Wrote ${view.config_dir}/hyprland.lua and hyprland.conf. Load the lua file from hyprland.lua if you have not.`
+          : "Window rule installed.";
+    } catch (e) {
+      status = errorText(e);
+    }
+  }
+
   function saveMeetingApps() {
     if (!view) return;
     view.config.meetings.detect_apps = meetingApps
@@ -196,7 +208,10 @@
             {#if info?.shortcuts.bound.length}
               <ul class="bound">
                 {#each info.shortcuts.bound as [id, trigger]}
-                  <li>{shortcutNames[id] ?? id}: <b>{trigger || "not assigned"}</b></li>
+                  <li>
+                    {shortcutNames[id] ?? id}:
+                    <b>{trigger || (view.compositor === "hyprland" ? "registered (desktop did not name the key)" : "not assigned")}</b>
+                  </li>
                 {/each}
               </ul>
             {:else if info?.shortcuts.pending}
@@ -204,8 +219,13 @@
             {/if}
             <div class="row">
               <button onclick={rebind}>Set up again</button>
-              <span class="muted small">Change the keys in System Settings › Keyboard › Shortcuts › Tyst.</span>
+              {#if view.hyprland_binds}
+                <span class="muted small">If no dialog appears, add these lines to hyprland.conf (use the real path to tyst if it is not on PATH).</span>
+              {:else}
+                <span class="muted small">Change the keys in System Settings › Keyboard › Shortcuts › Tyst.</span>
+              {/if}
             </div>
+            {#if view.hyprland_binds}<pre class="mono notes">{view.hyprland_binds}</pre>{/if}
           {/if}
           {#if info?.shortcuts.error}<span class="warn small">{info.shortcuts.error}</span>{/if}
         </div>
@@ -234,7 +254,12 @@
           </select>
           <span class="muted small">Tab in the pill switches language while dictating.</span>
         </div>
-        {#if view.platform === "linux"}
+        {#if view.compositor === "hyprland"}
+          <div class="field">
+            <span class="name">Paste</span>
+            <span class="muted small">Tyst pastes with wtype (Ctrl+V, Ctrl+Shift+V in a terminal). Omarchy includes wtype. If wtype is missing, Tyst tries ydotool. The previous clipboard text is put back when that option is on.</span>
+          </div>
+        {:else if view.platform === "linux"}
           <div class="field">
             <span class="name">Paste access</span>
             <div class="row">
@@ -243,13 +268,15 @@
             </div>
             <span class="muted small">Tyst types Ctrl+V for you through the desktop's remote input permission (asked once).</span>
           </div>
+        {:else if view.platform === "macos"}
+          <p class="muted small">Pasting needs the Accessibility permission: System Settings › Privacy &amp; Security › Accessibility.</p>
+        {/if}
+        {#if view.platform === "linux"}
           <div class="field">
             <span class="name">Terminals</span>
             <textarea class="mono" rows="4" bind:value={terminals} onchange={saveTerminals}></textarea>
             <span class="muted small">Window classes that paste with Ctrl+Shift+V, one per line.</span>
           </div>
-        {:else if view.platform === "macos"}
-          <p class="muted small">Pasting needs the Accessibility permission: System Settings › Privacy &amp; Security › Accessibility.</p>
         {/if}
       {:else if tab === "meetings"}
         <h2>Meetings</h2>
@@ -288,11 +315,22 @@
           </div>
         </div>
         <p class="muted small">On speakers the microphone also hears the others. Echo cancellation takes their voices out of “{c.labels.me}” using the system audio; headphones work best.</p>
-        {#if view.platform === "linux"}
+        {#if view.compositor === "hyprland"}
+          <div class="field">
+            <span class="name">Hyprland window rules</span>
+            <div class="row">
+              <button onclick={installRules}>Reinstall</button>
+              <span class="muted small">Floats the meeting window and the pill, pins them, and keeps them from taking focus when they appear. The name field can still be typed in.</span>
+            </div>
+            <span class="muted small">Tyst writes the rules and does not edit your Hyprland config. On Omarchy, add this in <span class="mono">~/.config/hypr/hyprland.lua</span> after <span class="mono">require("default.hypr.omarchy")</span>, then reload and restart Tyst:</span>
+            <pre class="mono notes">dofile("{view.config_dir}/hyprland.lua")</pre>
+            <span class="muted small">That file calls <span class="mono">hl.window_rule</span> (Hyprland 0.56). Omarchy's <span class="mono">o.window</span> is a helper around the same rules; the file does not need it. A classic config, not Lua, uses <span class="mono">source = {view.config_dir}/hyprland.conf</span> instead.</span>
+          </div>
+        {:else if view.platform === "linux"}
           <div class="field">
             <span class="name">KDE window rule</span>
             <div class="row">
-              <button onclick={() => api.installWindowRule().then(() => (status = "Window rule installed.")).catch((e) => (status = errorText(e)))}>Reinstall</button>
+              <button onclick={installRules}>Reinstall</button>
               <span class="muted small">Keeps the meeting window and the dictation pill on top without taking focus (System Settings › Window Rules).</span>
             </div>
           </div>

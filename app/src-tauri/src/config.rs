@@ -75,6 +75,8 @@ pub struct MeetingSettings {
     /// KDE: the meeting window's top-left corner in KWin's global coordinates, read through a
     /// KWin script when the window hides (Wayland clients cannot read or set their position).
     pub kwin_position: Option<(i32, i32)>,
+    /// Hyprland: the same corner in Hyprland's global layout, read over its IPC socket.
+    pub hypr_position: Option<(i32, i32)>,
 }
 
 /// How the dictation shortcut behaves (SPEC 8.4, 15 q5).
@@ -201,6 +203,7 @@ impl Default for MeetingSettings {
             detect: false,
             detect_apps: tyst_platform::mic_watch::DEFAULT_APPS.iter().map(|s| s.to_string()).collect(),
             kwin_position: None,
+            hypr_position: None,
         }
     }
 }

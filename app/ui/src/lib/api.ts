@@ -167,6 +167,10 @@ export interface ConfigView {
   app_filter_supported: boolean;
   version: string;
   platform: string;
+  /** `kde`, `hyprland` or `other`. */
+  compositor: string;
+  /** Hyprland `bind` lines, when the shortcut portal does not bind a key. */
+  hyprland_binds: string | null;
 }
 
 export interface ModelRow {

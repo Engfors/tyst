@@ -1,9 +1,10 @@
 //! Desktop glue for dictation (SPEC 8.4, 10): remembering the window to paste into, placing and
 //! focusing the pill, and the paste itself (clipboard -> paste keystroke -> clipboard restored).
 //!
-//! Linux: KWin scripting finds and re-activates the window and places the pill (KDE only; other
-//! desktops hand focus back on their own), the RemoteDesktop portal types the keystroke (with
-//! `ydotool` as a fallback), and terminals get Ctrl+Shift+V. macOS: the frontmost app is
+//! Linux: KWin scripting (KDE) or Hyprland IPC finds and re-activates the window and places the
+//! pill; other desktops hand focus back on their own. The RemoteDesktop portal types the keystroke
+//! (with `ydotool` as a fallback). Hyprland's portal has no RemoteDesktop, so paste there is
+//! `wtype` and then `ydotool`. Terminals get Ctrl+Shift+V. macOS: the frontmost app is
 //! re-activated and Cmd+V posted. Nothing here logs clipboard text or window titles.
 
 use std::time::Duration;
@@ -19,12 +20,30 @@ const FOCUS_SETTLE: Duration = Duration::from_millis(80);
 /// How long the pasted text stays on the clipboard before the old content comes back.
 const RESTORE_AFTER: Duration = Duration::from_millis(500);
 
+/// The window that was focused when dictation started, on the compositor that reported it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(target_os = "linux")]
+pub enum TrackedWindow {
+    Kwin(tyst_platform::kwin::WindowRef),
+    Hyprland(tyst_platform::hyprland::WindowRef),
+}
+
+#[cfg(target_os = "linux")]
+impl TrackedWindow {
+    fn class(&self) -> &str {
+        match self {
+            Self::Kwin(w) => w.class.as_str(),
+            Self::Hyprland(w) => w.class.as_str(),
+        }
+    }
+}
+
 /// Where the dictated text goes: the window that was active when dictation started.
 #[derive(Debug, Clone, Default)]
 pub struct Target {
-    /// KWin's window id and resource class (KDE).
+    /// KWin or Hyprland's window id and class.
     #[cfg(target_os = "linux")]
-    pub window: Option<tyst_platform::kwin::WindowRef>,
+    pub window: Option<TrackedWindow>,
     /// Process id of the frontmost app (macOS).
     #[cfg(target_os = "macos")]
     pub pid: Option<i32>,
@@ -34,24 +53,45 @@ impl Target {
     /// The window class (app id), where known.
     pub fn class(&self) -> Option<&str> {
         #[cfg(target_os = "linux")]
-        return self.window.as_ref().map(|w| w.class.as_str());
+        return self.window.as_ref().map(TrackedWindow::class);
         #[allow(unreachable_code)]
         None
     }
 }
 
-/// True where the app places the pill itself; false on KDE, where KWin does it.
-pub fn places_windows() -> bool {
+/// True where KWin or Hyprland places the windows (Wayland clients cannot).
+pub fn compositor_manages_windows() -> bool {
     #[cfg(target_os = "linux")]
-    return !tyst_platform::kwin::is_kde();
+    {
+        return tyst_platform::kwin::is_kde() || tyst_platform::hyprland::is_hyprland();
+    }
     #[allow(unreachable_code)]
-    true
+    false
+}
+
+/// The meeting window's top-left in the compositor's coordinates, if this desktop records one.
+#[cfg(target_os = "linux")]
+pub fn stored_meeting_origin(meetings: &crate::config::MeetingSettings) -> Option<(i32, i32)> {
+    if tyst_platform::kwin::is_kde() {
+        return meetings.kwin_position;
+    }
+    if tyst_platform::hyprland::is_hyprland() {
+        return meetings.hypr_position;
+    }
+    None
+}
+
+/// True where the app places the pill itself; false where the compositor does it.
+pub fn places_windows() -> bool {
+    !compositor_manages_windows()
 }
 
 pub struct Desktop {
     clipboard: Clipboard,
     #[cfg(target_os = "linux")]
     kwin: AsyncMutex<Option<std::sync::Arc<tyst_platform::kwin::KWin>>>,
+    #[cfg(target_os = "linux")]
+    hyprland: AsyncMutex<Option<std::sync::Arc<tyst_platform::hyprland::Hyprland>>>,
     #[cfg(target_os = "linux")]
     keyboard: AsyncMutex<Option<tyst_platform::portal::PortalKeyboard>>,
     #[cfg(not(target_os = "linux"))]
@@ -64,6 +104,8 @@ impl Default for Desktop {
             clipboard: Clipboard::new(),
             #[cfg(target_os = "linux")]
             kwin: AsyncMutex::new(None),
+            #[cfg(target_os = "linux")]
+            hyprland: AsyncMutex::new(None),
             #[cfg(target_os = "linux")]
             keyboard: AsyncMutex::new(None),
             #[cfg(not(target_os = "linux"))]
@@ -109,16 +151,43 @@ impl Desktop {
         k.clone()
     }
 
+    #[cfg(target_os = "linux")]
+    async fn hyprland(&self) -> Option<std::sync::Arc<tyst_platform::hyprland::Hyprland>> {
+        if !tyst_platform::hyprland::is_hyprland() {
+            return None;
+        }
+        let mut h = self.hyprland.lock().await;
+        if h.is_none() {
+            match tyst_platform::hyprland::Hyprland::connect() {
+                Ok(c) => *h = Some(std::sync::Arc::new(c)),
+                Err(e) => log::warn!("Hyprland IPC unavailable: {e}"),
+            }
+        }
+        h.clone()
+    }
+
     /// The window to paste into later (call before the pill shows).
     pub async fn target(&self) -> Target {
         #[cfg(target_os = "linux")]
         {
-            let window = match self.kwin().await {
-                Some(k) => k.active_window().await.unwrap_or_else(|e| {
-                    log::warn!("active window: {e}");
-                    None
-                }),
-                None => None,
+            let window = if let Some(k) = self.kwin().await {
+                k.active_window()
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::warn!("active window: {e}");
+                        None
+                    })
+                    .map(TrackedWindow::Kwin)
+            } else if let Some(h) = self.hyprland().await {
+                h.active_window()
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::warn!("active window: {e}");
+                        None
+                    })
+                    .map(TrackedWindow::Hyprland)
+            } else {
+                None
             };
             Target { window }
         }
@@ -130,15 +199,22 @@ impl Desktop {
         Target::default()
     }
 
-    /// Shows the pill; on KDE KWin then moves it to the bottom centre of the active screen and,
-    /// with `focus`, activates it.
+    /// Shows the pill. On KDE and Hyprland the compositor then moves it to the bottom centre of
+    /// the focused screen and, with `focus`, activates it.
     pub async fn show_pill(&self, app: &AppHandle, focus: bool) {
         let shown = windows::show_pill(app, focus).is_some();
         #[cfg(target_os = "linux")]
-        if shown && let Some(k) = self.kwin().await {
+        if shown {
             // A freshly shown window is mapped a moment later; try again briefly.
             for _ in 0..10 {
-                match k.place_bottom_center(windows::PILL_TITLE, windows::PILL_BOTTOM as i32, focus).await {
+                let placed = if let Some(k) = self.kwin().await {
+                    k.place_bottom_center(windows::PILL_TITLE, windows::PILL_BOTTOM as i32, focus).await
+                } else if let Some(h) = self.hyprland().await {
+                    h.place_bottom_center(windows::PILL_TITLE, windows::PILL_BOTTOM as i32, focus).await
+                } else {
+                    break;
+                };
+                match placed {
                     Ok(true) => break,
                     Ok(false) => tokio_sleep(Duration::from_millis(20)).await,
                     Err(e) => {
@@ -152,28 +228,45 @@ impl Desktop {
         let _ = shown;
     }
 
-    /// KDE: remembers where the meeting window is, before it hides.
+    /// KDE and Hyprland: remembers where the meeting window is, before it hides.
     #[cfg(target_os = "linux")]
     pub async fn remember_meeting_position(&self, app: &AppHandle) {
-        let Some(k) = self.kwin().await else { return };
-        match k.position(windows::MEETING_TITLE).await {
+        let (hypr, pos) = if let Some(k) = self.kwin().await {
+            (false, k.position(windows::MEETING_TITLE).await)
+        } else if let Some(h) = self.hyprland().await {
+            (true, h.position(windows::MEETING_TITLE).await)
+        } else {
+            return;
+        };
+        match pos {
             Ok(Some(p)) => {
                 use tauri::Manager;
-                app.state::<crate::state::AppState>().config.lock().expect("config lock").meetings.kwin_position =
-                    Some(p);
+                let state = app.state::<crate::state::AppState>();
+                let mut cfg = state.config.lock().expect("config lock");
+                if hypr {
+                    cfg.meetings.hypr_position = Some(p);
+                } else {
+                    cfg.meetings.kwin_position = Some(p);
+                }
             }
             Ok(None) => {}
             Err(e) => log::warn!("reading the meeting window position: {e}"),
         }
     }
 
-    /// KDE: puts the meeting window back where it was, once it is mapped.
+    /// KDE and Hyprland: puts the meeting window back where it was, once it is mapped.
     #[cfg(target_os = "linux")]
     pub async fn restore_meeting_position(&self, (x, y): (i32, i32)) {
-        let Some(k) = self.kwin().await else { return };
         // A freshly shown window is mapped a moment later; try again briefly.
         for _ in 0..25 {
-            match k.move_to(windows::MEETING_TITLE, x, y).await {
+            let moved = if let Some(k) = self.kwin().await {
+                k.move_to(windows::MEETING_TITLE, x, y).await
+            } else if let Some(h) = self.hyprland().await {
+                h.move_to(windows::MEETING_TITLE, x, y).await
+            } else {
+                return;
+            };
+            match moved {
                 Ok(true) => break,
                 Ok(false) => tokio_sleep(Duration::from_millis(20)).await,
                 Err(e) => {
@@ -184,11 +277,39 @@ impl Desktop {
         }
     }
 
+    /// Hyprland: focuses the meeting window so the name field can take keys. `no_initial_focus`
+    /// only skips the focus Hyprland would give the window on map; a later focus request is how
+    /// the name field is typed into. `no_focus` is not set, because that would refuse this.
+    #[cfg(target_os = "linux")]
+    pub async fn focus_meeting_window(&self) {
+        let Some(h) = self.hyprland().await else { return };
+        for _ in 0..10 {
+            match h.focus_title(windows::MEETING_TITLE).await {
+                Ok(true) => return,
+                Ok(false) => tokio_sleep(Duration::from_millis(20)).await,
+                Err(e) => {
+                    log::warn!("focusing the meeting window: {e}");
+                    return;
+                }
+            }
+        }
+    }
+
     /// Gives the keyboard back to the target window.
     pub async fn return_to(&self, target: &Target) {
         #[cfg(target_os = "linux")]
-        if let (Some(w), Some(k)) = (&target.window, self.kwin().await) {
-            match k.activate(&w.id).await {
+        if let Some(window) = &target.window {
+            let activated = match window {
+                TrackedWindow::Kwin(w) => match self.kwin().await {
+                    Some(k) => k.activate(&w.id).await,
+                    None => return,
+                },
+                TrackedWindow::Hyprland(w) => match self.hyprland().await {
+                    Some(h) => h.activate(&w.id).await,
+                    None => return,
+                },
+            };
+            match activated {
                 Ok(true) => {}
                 Ok(false) => log::info!("the dictation target window is gone"),
                 Err(e) => log::warn!("activating the target window: {e}"),
@@ -242,6 +363,11 @@ impl Desktop {
 
     #[cfg(target_os = "linux")]
     async fn keystroke(&self, terminal: bool, token: Option<String>) -> (Pasted, Option<String>) {
+        // xdg-desktop-portal-hyprland implements GlobalShortcuts and not RemoteDesktop, so the
+        // portal cannot type. wtype (virtual keyboard) then ydotool.
+        if tyst_platform::hyprland::is_hyprland() {
+            return keystroke_hyprland(terminal, token);
+        }
         use tyst_platform::DesktopError;
         let mut kb = self.keyboard.lock().await;
         let mut missing = false;
@@ -299,10 +425,15 @@ impl Desktop {
     }
 
     /// Asks for keyboard access now (the KDE consent dialog), for onboarding and settings.
-    /// Returns the restore token to keep.
+    /// Returns the restore token to keep. Hyprland has no such dialog; paste uses wtype.
     pub async fn setup_keyboard(&self, token: Option<String>) -> Result<Option<String>, String> {
         #[cfg(target_os = "linux")]
         {
+            if tyst_platform::hyprland::is_hyprland() {
+                return Err(
+                    "Hyprland has no remote-desktop portal. Paste uses wtype (ydotool if wtype is missing).".into()
+                );
+            }
             let mut kb = self.keyboard.lock().await;
             if kb.is_none() {
                 *kb = Some(tyst_platform::portal::PortalKeyboard::new(token).await.map_err(|e| e.to_string())?);
@@ -313,6 +444,22 @@ impl Desktop {
         }
         #[cfg(not(target_os = "linux"))]
         Ok(token)
+    }
+}
+
+/// Hyprland paste: `wtype` (Ctrl+V, Ctrl+Shift+V in a terminal), then `ydotool`.
+#[cfg(target_os = "linux")]
+fn keystroke_hyprland(terminal: bool, token: Option<String>) -> (Pasted, Option<String>) {
+    match tyst_platform::portal::wtype_paste(terminal) {
+        Ok(()) => return (Pasted::Typed, token),
+        Err(e) => log::warn!("paste through wtype: {e}"),
+    }
+    match tyst_platform::portal::ydotool_paste(terminal) {
+        Ok(()) => (Pasted::Typed, token),
+        Err(e) => {
+            log::warn!("paste through ydotool: {e}");
+            (Pasted::ClipboardOnly, token)
+        }
     }
 }
 

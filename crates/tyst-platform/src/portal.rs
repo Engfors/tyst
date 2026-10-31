@@ -248,9 +248,31 @@ impl PortalKeyboard {
     }
 }
 
+/// Arguments for `wtype` that press Ctrl+V, or Ctrl+Shift+V when `shift` is set. The dictated
+/// text is not one of them: it is already on the clipboard.
+pub fn wtype_args(shift: bool) -> &'static [&'static str] {
+    if shift {
+        &["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"]
+    } else {
+        &["-M", "ctrl", "-k", "v", "-m", "ctrl"]
+    }
+}
+
+/// Ctrl+V (Ctrl+Shift+V in a terminal) through `wtype`, which speaks Wayland's virtual-keyboard
+/// protocol. Omarchy ships `wtype`. Hyprland's portal has no RemoteDesktop, so this is the paste
+/// path there; [`ydotool_paste`] is the fallback when `wtype` is not installed.
+pub fn wtype_paste(shift: bool) -> Result<(), DesktopError> {
+    let status = crate::appimage::host_command("wtype")
+        .args(wtype_args(shift))
+        .status()
+        .map_err(|e| DesktopError::Input(format!("wtype: {e}")))?;
+    if status.success() { Ok(()) } else { Err(DesktopError::Input(format!("wtype exited with {status}"))) }
+}
+
 /// Fallback only when the portal is missing ([`DesktopError::PortalMissing`]), never after the
 /// user refused the portal's dialog: Ctrl+V (Ctrl+Shift+V) through `ydotool`, which needs
-/// `ydotoold` running and access to `/dev/uinput` (SPEC 10.2, set up by the user).
+/// `ydotoold` running and access to `/dev/uinput` (SPEC 10.2, set up by the user). On Hyprland,
+/// where the portal has no RemoteDesktop, this runs only after [`wtype_paste`] fails.
 pub fn ydotool_paste(shift: bool) -> Result<(), DesktopError> {
     // Linux input event codes: KEY_LEFTCTRL 29, KEY_LEFTSHIFT 42, KEY_V 47.
     let keys: &[&str] =
@@ -278,5 +300,11 @@ mod tests {
         assert!(matches!(DesktopError::from(denied), DesktopError::Portal(_)));
         let other = ashpd::Error::Response(ashpd::desktop::ResponseError::Other);
         assert!(matches!(DesktopError::from(other), DesktopError::Portal(_)));
+    }
+
+    #[test]
+    fn wtype_presses_v_with_modifiers_and_not_text() {
+        assert_eq!(wtype_args(false), &["-M", "ctrl", "-k", "v", "-m", "ctrl"]);
+        assert_eq!(wtype_args(true), &["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"]);
     }
 }

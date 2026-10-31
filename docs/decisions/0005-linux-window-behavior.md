@@ -32,6 +32,14 @@ No layer-shell spike.
   them; they stay behind if Tyst is removed (Settings › Meetings can reinstall them, and KDE's
   Window Rules settings can delete them).
 
+### Update (2026-10-31) — Hyprland, same choice
+
+Omarchy (Hyprland) gets the same option 1, not layer-shell: a rules file Tyst writes and the user
+`source`s (Tyst does not edit `hyprland.conf`), plus Hyprland IPC for what rules cannot express
+(pill placement, focus return, meeting-window position). The rule syntax is Hyprland 0.53's.
+`no_initial_focus` is used instead of `no_focus`, so showing a window does not take the keyboard
+and the name field can still be typed into. KDE behavior above is unchanged.
+
 ## Evidence
 
 Owner acceptance on Arch / KDE Plasma 6 (Wayland): Phase 2 runs A, B and E (the window never took

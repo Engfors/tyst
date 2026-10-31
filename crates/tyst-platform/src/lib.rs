@@ -2,13 +2,15 @@
 //!
 //! Audio capture: the microphone through cpal (feature `mic`, every platform) and, on Linux,
 //! microphone and system audio through PipeWire (feature `pipewire`). Dictation's desktop
-//! integration (feature `desktop`): the clipboard, and on Linux the XDG portals and KWin
-//! scripting, on macOS app activation and the paste keystroke.
+//! integration (feature `desktop`): the clipboard, and on Linux the XDG portals, KWin
+//! scripting and Hyprland IPC, on macOS app activation and the paste keystroke.
 
 #[cfg(target_os = "linux")]
 pub mod appimage;
 #[cfg(feature = "desktop")]
 pub mod clipboard;
+#[cfg(all(target_os = "linux", feature = "desktop"))]
+pub mod hyprland;
 #[cfg(all(target_os = "linux", feature = "desktop"))]
 pub mod kwin;
 #[cfg(all(target_os = "macos", feature = "desktop"))]
@@ -59,6 +61,8 @@ pub enum DesktopError {
     PortalMissing(String),
     #[error("KWin: {0}")]
     KWin(String),
+    #[error("Hyprland: {0}")]
+    Hyprland(String),
     #[error("keyboard input: {0}")]
     Input(String),
 }
