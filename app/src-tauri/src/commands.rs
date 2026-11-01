@@ -66,6 +66,12 @@ pub fn meeting_save(app: AppHandle, title: Option<String>) -> CmdResult<String> 
     state::save_meeting(&app, title)
 }
 
+/// Confirmed discard from the name prompt: deletes the journal and writes no note.
+#[tauri::command]
+pub fn meeting_discard(app: AppHandle) -> CmdResult {
+    state::discard_meeting(&app)
+}
+
 #[tauri::command]
 pub fn meeting_window_hide(app: AppHandle) {
     windows::hide_meeting(&app);

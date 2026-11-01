@@ -1,8 +1,10 @@
 <script lang="ts">
   // Floating meeting window (SPEC 8.3): header with recording state, level meters, language,
   // pause and stop; the live transcript with scrollback; the name prompt after stopping; the
-  // saved toast. The window never asks for focus except for the name field.
+  // saved toast. The window never asks for focus except for the name field. Escape on that
+  // prompt asks before discarding; Keep is focused so Enter stays on the safe choice.
   import { onDestroy, onMount, tick } from "svelte";
+  import { implicitSave, namingDecision, type NamingDecision, type NamingTarget } from "./naming-action";
   import {
     api,
     errorText,
@@ -28,12 +30,16 @@
   let title = $state("");
   let preview = $state<string | null>(null);
   let countdown = $state(0);
-  let saving = false;
+  let saving = $state(false);
   // A failed save, shown in the name prompt: the prompt covers the warning bar.
   let saveError = $state<string | null>(null);
   let followLatest = $state(true);
   let body: HTMLElement | undefined = $state();
   let titleInput: HTMLInputElement | undefined = $state();
+  let keepButton: HTMLButtonElement | undefined = $state();
+  let confirmRoot: HTMLElement | undefined = $state();
+  // Escape on the name prompt. The typed title stays put until save or a confirmed discard.
+  let confirming = $state(false);
   let timers: ReturnType<typeof setInterval>[] = [];
   let unlisten: (() => void) | undefined;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -103,11 +109,13 @@
     startedAt = Date.now() - s.elapsed_ms;
     elapsed = s.elapsed_ms;
     if (s.phase === "starting") saved = null;
+    if (s.phase !== "naming") confirming = false;
     if (s.phase === "naming" && !wasNaming && s.naming) startNaming(s.naming.seconds);
   }
 
   async function startNaming(seconds: number) {
     title = "";
+    confirming = false;
     preview = snap?.naming?.path_preview ?? null;
     countdown = seconds;
     saving = false;
@@ -179,15 +187,75 @@
     warning = errorText(e);
   }
 
-  async function save(withTitle: boolean) {
+  async function saveTitle(name: string | null, allowDuringConfirm = false) {
     if (saving || snap?.phase !== "naming") return;
+    // Blur and Enter must not save while the confirmation is open. The countdown may:
+    // ignoring the prompt still saves, including when the window was closed.
+    if (confirming && !allowDuringConfirm) return;
     saving = true;
     try {
-      await api.save(withTitle && title.trim() ? title.trim() : null);
+      await api.save(name);
       saveError = null;
     } catch (e) {
       saving = false;
+      confirming = false;
       saveError = `Could not save: ${errorText(e)}`;
+      await tick();
+      titleInput?.focus();
+    }
+  }
+
+  function run(decision: NamingDecision) {
+    switch (decision.type) {
+      case "save":
+        void saveTitle(decision.title);
+        break;
+      case "ask-discard":
+        void askDiscard();
+        break;
+      case "keep":
+        void keepRecording();
+        break;
+      case "discard":
+        void discard();
+        break;
+      case "ignore":
+        break;
+    }
+  }
+
+  // Keep takes focus. Enter and a second Escape then land on it; a failed focus still keeps,
+  // because Enter anywhere except the Discard button keeps.
+  async function askDiscard() {
+    if (saving || confirming || snap?.phase !== "naming") return;
+    titleBlurToken++;
+    confirming = true;
+    countdown = Math.max(countdown, 10);
+    await tick();
+    (keepButton ?? confirmRoot)?.focus();
+  }
+
+  async function keepRecording() {
+    if (!confirming || saving) return;
+    confirming = false;
+    await tick();
+    titleInput?.focus();
+  }
+
+  async function discard() {
+    if (saving || !confirming || snap?.phase !== "naming") return;
+    saving = true;
+    try {
+      await api.discard();
+      saveError = null;
+      // The idle snapshot closes the dialog. Leave it up if that snapshot has not
+      // arrived yet, so the name field does not flash back with the recording gone.
+      if (snap?.phase !== "naming") confirming = false;
+    } catch (e) {
+      saving = false;
+      confirming = false;
+      saveError = `Could not discard: ${errorText(e)}`;
+      await tick();
       titleInput?.focus();
     }
   }
@@ -201,19 +269,57 @@
     }, 150);
   }
 
+  // Clicking away from the name field saves. Opening the confirmation blurs the field too;
+  // that blur must not save, and cancelling returns with the typed name.
+  let titleBlurToken = 0;
+  function onTitleBlur() {
+    if (implicitSave(confirming, title).type !== "save") return;
+    const token = ++titleBlurToken;
+    setTimeout(() => {
+      if (token !== titleBlurToken) return;
+      const action = implicitSave(confirming, title);
+      if (action.type !== "save" || snap?.phase !== "naming") return;
+      void saveTitle(action.title);
+    }, 150);
+  }
+
   function onTitleKey(e: KeyboardEvent) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      save(true);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      save(false);
-    }
+    const decision = namingDecision({ confirming, key: e.key, target: "input", title });
+    if (decision.type === "ignore") return;
+    e.preventDefault();
+    e.stopPropagation();
+    run(decision);
+  }
+
+  function namingTarget(target: EventTarget | null): NamingTarget {
+    if (target instanceof HTMLElement && target.dataset.action === "discard") return "discard";
+    if (target instanceof HTMLElement && target.dataset.action === "keep") return "keep";
+    if (target instanceof HTMLInputElement) return "input";
+    return "other";
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.target instanceof HTMLInputElement) return;
+    if (phase === "naming") {
+      // The name field handles its own Enter and Escape.
+      if (e.target instanceof HTMLInputElement) return;
+      const decision = namingDecision({ confirming, key: e.key, target: namingTarget(e.target), title });
+      if (decision.type !== "ignore") {
+        e.preventDefault();
+        run(decision);
+      }
+      return;
+    }
     if (e.key === "Escape" && phase === "idle") api.hide();
+  }
+
+  // The header's hide control is not Escape. During the name prompt, including the
+  // discard confirmation, hiding still saves (typed name, or the default title).
+  function hideWindow() {
+    if (snap?.phase === "naming") {
+      const action = implicitSave(false, title);
+      if (action.type === "save") void saveTitle(action.title, true);
+    }
+    void api.hide();
   }
 
   // macOS: a click here makes Tyst the active app; hand the keyboard back to the meeting app
@@ -232,9 +338,11 @@
         levels = { me: levels.me * 0.85, others: levels.others * 0.85 };
       }, 100),
       setInterval(() => {
-        if (snap?.phase === "naming" && countdown > 0) {
-          countdown -= 1;
-          if (countdown === 0) save(!!title.trim());
+        if (snap?.phase !== "naming" || countdown <= 0) return;
+        countdown -= 1;
+        if (countdown === 0) {
+          const action = implicitSave(false, title);
+          if (action.type === "save") void saveTitle(action.title, true);
         }
       }, 1000),
     );
@@ -311,7 +419,7 @@
           <svg viewBox="0 0 16 16"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.6" /></svg>
         {/if}
       </button>
-      <button class="icon" title="Hide (recording continues)" onclick={() => api.hide()}>
+      <button class="icon" title="Hide (recording continues)" onclick={hideWindow}>
         <svg viewBox="0 0 16 16"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.6" /></svg>
       </button>
     </div>
@@ -342,31 +450,68 @@
   {/if}
 
   {#if phase === "naming" && snap?.naming}
-    <form class="naming" onsubmit={(e) => { e.preventDefault(); save(true); }}>
-      <label for="title">Name this meeting</label>
-      <div class="row">
-        <input
-          id="title"
-          type="text"
-          bind:this={titleInput}
-          bind:value={title}
-          placeholder={snap.naming.placeholder}
-          autocomplete="off"
-          spellcheck="false"
-          oninput={onTitleInput}
-          onkeydown={onTitleKey}
-          onblur={() => setTimeout(() => save(!!title.trim()), 150)}
-        />
-        <button class="primary" type="submit">Save</button>
+    {#if confirming}
+      <div
+        class="confirm"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="discard-title"
+        aria-describedby="discard-body"
+        tabindex="-1"
+        bind:this={confirmRoot}
+      >
+        <h2 id="discard-title">Discard this recording?</h2>
+        <p id="discard-body" class="muted">The transcript is deleted and nothing is saved.</p>
+        <div class="row">
+          <button
+            class="primary"
+            type="button"
+            data-action="keep"
+            bind:this={keepButton}
+            disabled={saving}
+            onclick={keepRecording}
+          >
+            Keep
+          </button>
+          <button class="danger" type="button" data-action="discard" disabled={saving} onclick={discard}>
+            Discard
+          </button>
+        </div>
       </div>
-      {#if saveError}
-        <div class="save-error" role="alert">{saveError}</div>
-      {/if}
-      <div class="hint muted">
-        <span class="path mono" title={preview ?? ""}>{fileName(preview)}</span>
-        <span class="count">Esc: save as is · {countdown}s</span>
-      </div>
-    </form>
+    {:else}
+      <form
+        class="naming"
+        onsubmit={(e) => {
+          e.preventDefault();
+          const action = implicitSave(confirming, title);
+          if (action.type === "save") void saveTitle(action.title);
+        }}
+      >
+        <label for="title">Name this meeting</label>
+        <div class="row">
+          <input
+            id="title"
+            type="text"
+            bind:this={titleInput}
+            bind:value={title}
+            placeholder={snap.naming.placeholder}
+            autocomplete="off"
+            spellcheck="false"
+            oninput={onTitleInput}
+            onkeydown={onTitleKey}
+            onblur={onTitleBlur}
+          />
+          <button class="primary" type="submit">Save</button>
+        </div>
+        {#if saveError}
+          <div class="save-error" role="alert">{saveError}</div>
+        {/if}
+        <div class="hint muted">
+          <span class="path mono" title={preview ?? ""}>{fileName(preview)}</span>
+          <span class="count">Esc: discard · {countdown}s</span>
+        </div>
+      </form>
+    {/if}
   {/if}
 
   {#if saved}
@@ -636,9 +781,41 @@
     animation: fade var(--motion) ease-out;
   }
 
-  main.compact .naming {
+  main.compact .naming,
+  main.compact .confirm {
     position: static;
     padding: 6px 10px 10px;
+  }
+
+  .confirm {
+    position: absolute;
+    inset: 42px 0 0 0;
+    background: var(--bg);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    animation: fade var(--motion) ease-out;
+    z-index: 2;
+  }
+
+  .confirm h2,
+  .confirm p {
+    margin: 0;
+  }
+
+  .confirm h2 {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .confirm .row {
+    display: flex;
+    gap: 6px;
+  }
+
+  button.danger {
+    color: var(--rec);
   }
 
   .naming label {

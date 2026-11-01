@@ -18,6 +18,7 @@ const COMMANDS: &[&str] = &[
     "dictation_stop",
     "dictation_toggle",
     "install_window_rule",
+    "meeting_discard",
     "meeting_preview",
     "meeting_prompt_answer",
     "meeting_save",

@@ -17,6 +17,9 @@ Features
 - `tyst-cli bench --boost 0.25,0.5,1` scores boosted decoding next to the plain rows.
 
 Fixes
+- Escape on the meeting name prompt asks "Discard this recording?" before deleting it. Keep is
+  focused, so Enter or Escape again returns to the name field with the typed name. Saving with an
+  empty name, or closing the window another way, still uses the title Meeting.
 - Finishing onboarding again after the settings could not be saved now starts meeting detection,
   the update check and idle model unload.
 

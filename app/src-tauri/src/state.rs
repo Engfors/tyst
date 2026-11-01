@@ -145,7 +145,7 @@ impl AppState {
             Session::Starting { .. } => Phase::Starting,
             Session::Recording(m) if m.is_paused() => Phase::Paused,
             Session::Recording(_) => Phase::Recording,
-            Session::Stopping => Phase::Stopping,
+            Session::Stopping | Session::Discarding => Phase::Stopping,
             Session::Naming { .. } | Session::Saving => Phase::Naming,
         }
     }
@@ -597,6 +597,41 @@ pub fn preview_path(app: &AppHandle, title: Option<&str>) -> Option<String> {
     match &*st.session.lock().expect("session lock") {
         Session::Naming { stopped, .. } => Some(stopped.preview_path(title).display().to_string()),
         _ => None,
+    }
+}
+
+/// Deletes the stopped meeting's journal and writes no note. The meeting stays in naming if
+/// the journal cannot be removed, so it can be saved or discarded again.
+pub fn discard_meeting(app: &AppHandle) -> Result<(), String> {
+    let st = app.state::<AppState>();
+    let Some((stopped, token)) = st.session.lock().expect("session lock").discard() else {
+        return Err("no meeting waiting to be discarded".into());
+    };
+    // The name prompt is the one time this window takes the keyboard. Give it back either way;
+    // a failed discard asks for it again, the same as a failed save.
+    windows::focus_for_typing(app, false);
+    match stopped.try_discard() {
+        Ok(()) => {
+            st.session.lock().expect("session lock").discarded();
+            {
+                let mut live = st.live.lock().expect("live lock");
+                live.segments.clear();
+                live.partials.clear();
+                live.warning = None;
+            }
+            st.emit_state(app);
+            Ok(())
+        }
+        Err(failed) => {
+            let (stopped, e) = *failed;
+            st.session.lock().expect("session lock").discard_failed(stopped, token);
+            let message = format!("Could not discard the meeting: {e}");
+            st.live.lock().expect("live lock").warning = Some(message.clone());
+            st.emit_state(app);
+            let _ = app.emit(MEETING_EVENT, UiEvent::Warning { message });
+            windows::focus_for_typing(app, true);
+            Err(e.to_string())
+        }
     }
 }
 

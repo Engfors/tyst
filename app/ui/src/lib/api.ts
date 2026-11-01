@@ -215,6 +215,7 @@ export const api = {
   setLanguage: (language: LanguageMode) => invoke<void>("meeting_set_language", { language }),
   preview: (title: string | null) => invoke<string | null>("meeting_preview", { title }),
   save: (title: string | null) => invoke<string>("meeting_save", { title }),
+  discard: () => invoke<void>("meeting_discard"),
   hide: () => invoke<void>("meeting_window_hide"),
   compact: (compact: boolean) => invoke<void>("meeting_window_compact", { compact }),
   giveBackFocus: () => invoke<void>("meeting_window_give_back_focus"),

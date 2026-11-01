@@ -1,9 +1,11 @@
 //! The meeting session's lifecycle, kept free of capture and UI so its races can be tested.
 //!
-//! Idle → Starting → Recording → Stopping → Naming → Saving → Idle. A start only begins from
-//! Idle, so a start that lands while a stop is still joining threads or a save is still writing
-//! does nothing. Stop or quit during Starting cancels the start: the loading thread finds its
-//! generation gone and stops the meeting it just started instead of storing it.
+//! Idle → Starting → Recording → Stopping → Naming → Saving → Idle. From Naming, discard deletes
+//! the recording (Naming → Discarding → Idle) and save writes it. A start only begins from Idle,
+//! so a start that lands while a stop is still joining threads, a save is still writing, or a
+//! discard is still deleting the journal does nothing. Stop or quit during Starting cancels the
+//! start: the loading thread finds its generation gone and stops the meeting it just started
+//! instead of storing it.
 
 /// One meeting's lifecycle. `M` is a running meeting, `S` a stopped one waiting for its name.
 pub enum Session<M, S> {
@@ -21,6 +23,8 @@ pub enum Session<M, S> {
     },
     /// The Markdown file is being written.
     Saving,
+    /// The journal is being deleted. A start or a save finds nothing.
+    Discarding,
 }
 
 /// What [`Session::cancel`] found.
@@ -123,6 +127,31 @@ impl<M, S> Session<M, S> {
         *self = Session::Naming { stopped, token };
     }
 
+    /// Naming → Discarding, handing out the stopped meeting so the caller can delete its journal.
+    /// Nothing is written. A later save for this meeting finds nothing until [`Self::discard_failed`].
+    pub fn discard(&mut self) -> Option<(S, u64)> {
+        match std::mem::replace(self, Session::Discarding) {
+            Session::Naming { stopped, token } => Some((stopped, token)),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+
+    /// Discarding → Idle.
+    pub fn discarded(&mut self) {
+        if matches!(self, Session::Discarding) {
+            *self = Session::Idle;
+        }
+    }
+
+    /// Discarding → Naming: a failed delete keeps the meeting so it can be saved or discarded again.
+    pub fn discard_failed(&mut self, stopped: S, token: u64) {
+        debug_assert!(matches!(self, Session::Discarding));
+        *self = Session::Naming { stopped, token };
+    }
+
     pub fn naming_token(&self) -> Option<u64> {
         match self {
             Session::Naming { token, .. } => Some(*token),
@@ -179,6 +208,71 @@ mod tests {
         s.save().unwrap();
         s.saved();
         assert_eq!(s.start(5), Some(5));
+    }
+
+    fn at_naming() -> S {
+        let mut s = S::Idle;
+        s.start(1);
+        s.begin(1, "m").unwrap();
+        s.stop().unwrap();
+        s.stopped("notes", 7);
+        s
+    }
+
+    #[test]
+    fn keep_leaves_the_meeting_named_so_a_later_save_writes_it() {
+        let mut s = at_naming();
+        // Closing the prompt without discard stays here; the caller can still save.
+        assert_eq!(s.naming_token(), Some(7));
+        let (stopped, token) = s.save().unwrap();
+        assert_eq!((stopped, token), ("notes", 7));
+        assert!(matches!(s, Session::Saving));
+        s.saved();
+        assert!(matches!(s, Session::Idle));
+        assert!(s.save().is_none());
+        assert!(s.discard().is_none());
+    }
+
+    #[test]
+    fn discard_takes_the_meeting_and_a_later_save_finds_nothing() {
+        let mut s = at_naming();
+        let (stopped, token) = s.discard().unwrap();
+        assert_eq!((stopped, token), ("notes", 7));
+        assert!(matches!(s, Session::Discarding));
+        assert_eq!(s.naming_token(), None);
+        assert_eq!(s.start(9), None, "start while the journal is being deleted");
+        assert!(s.save().is_none(), "save while discarding");
+        assert!(s.discard().is_none());
+        s.discarded();
+        assert!(matches!(s, Session::Idle));
+        assert!(s.save().is_none());
+    }
+
+    #[test]
+    fn failed_discard_returns_to_naming_and_save_still_works() {
+        let mut s = at_naming();
+        let (stopped, token) = s.discard().unwrap();
+        s.discard_failed(stopped, token);
+        assert_eq!(s.naming_token(), Some(7));
+        let (stopped, token) = s.save().unwrap();
+        assert_eq!((stopped, token), ("notes", 7));
+        s.saved();
+        assert!(matches!(s, Session::Idle));
+    }
+
+    #[test]
+    fn discard_does_nothing_outside_naming() {
+        let mut s = S::Idle;
+        assert!(s.discard().is_none());
+        s.start(1);
+        assert!(s.discard().is_none());
+        assert!(s.is_starting(1));
+        s.begin(1, "m").unwrap();
+        assert!(s.discard().is_none());
+        assert!(matches!(s, Session::Recording("m")));
+        s.stop().unwrap();
+        assert!(s.discard().is_none());
+        assert!(matches!(s, Session::Stopping));
     }
 
     #[test]
