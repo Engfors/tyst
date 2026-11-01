@@ -9,6 +9,7 @@
     api,
     errorText,
     formatElapsed,
+    STALE_PROMPT,
     onMeeting,
     type Channel,
     type Lang,
@@ -102,6 +103,7 @@
 
   function apply(s: Snapshot) {
     const wasNaming = snap?.phase === "naming";
+    const previousToken = snap?.naming?.token;
     snap = s;
     segments = s.segments;
     partials = s.partials;
@@ -110,7 +112,8 @@
     elapsed = s.elapsed_ms;
     if (s.phase === "starting") saved = null;
     if (s.phase !== "naming") confirming = false;
-    if (s.phase === "naming" && !wasNaming && s.naming) startNaming(s.naming.seconds);
+    // A new token is a different meeting. Reset the prompt, including a confirmation for the old one.
+    if (s.phase === "naming" && s.naming && (!wasNaming || s.naming.token !== previousToken)) startNaming(s.naming.seconds);
   }
 
   async function startNaming(seconds: number) {
@@ -187,16 +190,32 @@
     warning = errorText(e);
   }
 
+  function promptToken(): number | null {
+    return snap?.phase === "naming" ? (snap.naming?.token ?? null) : null;
+  }
+
+  function closeStalePrompt() {
+    saving = false;
+    confirming = false;
+    saveError = null;
+  }
+
   async function saveTitle(name: string | null, allowDuringConfirm = false) {
     if (saving || snap?.phase !== "naming") return;
     // Blur and Enter must not save while the confirmation is open. The countdown may:
     // ignoring the prompt still saves, including when the window was closed.
     if (confirming && !allowDuringConfirm) return;
+    const token = promptToken();
+    if (token == null) return;
     saving = true;
     try {
-      await api.save(name);
+      await api.save(name, token);
       saveError = null;
     } catch (e) {
+      if (errorText(e) === STALE_PROMPT) {
+        closeStalePrompt();
+        return;
+      }
       saving = false;
       confirming = false;
       saveError = `Could not save: ${errorText(e)}`;
@@ -244,14 +263,20 @@
 
   async function discard() {
     if (saving || !confirming || snap?.phase !== "naming") return;
+    const token = promptToken();
+    if (token == null) return;
     saving = true;
     try {
-      await api.discard();
+      await api.discard(token);
       saveError = null;
       // The idle snapshot closes the dialog. Leave it up if that snapshot has not
       // arrived yet, so the name field does not flash back with the recording gone.
       if (snap?.phase !== "naming") confirming = false;
     } catch (e) {
+      if (errorText(e) === STALE_PROMPT) {
+        closeStalePrompt();
+        return;
+      }
       saving = false;
       confirming = false;
       saveError = `Could not discard: ${errorText(e)}`;

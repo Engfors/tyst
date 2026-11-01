@@ -295,7 +295,7 @@ models: [pianissimo-sv-int8@<rev>, parakeet-tdt-0.6b-v3-int8@<rev>]
 - Stop via button, tray, or meeting shortcut.
 - Window shows an inline prompt: **"Name this meeting"** text field (focused, placeholder = timestamp name), *Save* (Enter), and the file path preview.
 - Enter or Save with an empty name, clicking away, closing the window, or ignoring the prompt for 30 s → save with the timestamp name.
-- Esc asks "Discard this recording?". Keep is focused, so Enter or Esc again returns to the name field with what was typed. Discard deletes the journal and writes no note.
+- Esc asks "Discard this recording?". Keep is focused, so Enter or Esc again returns to the name field with what was typed. Discard deletes the journal and writes no note. A prompt that is no longer the current meeting cannot discard or save it.
 - After saving: brief toast "Saved · Open · Show in folder", then the window hides.
 
 ### 8.4 Dictation flow

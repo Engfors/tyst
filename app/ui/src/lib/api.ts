@@ -25,7 +25,12 @@ export interface Naming {
   placeholder: string;
   path_preview: string;
   seconds: number;
+  /** Prompt id. Save and discard send it back so a stale dialog cannot touch a newer meeting. */
+  token: number;
 }
+
+/** `meeting_save` / `meeting_discard` reject a prompt that is no longer the waiting meeting. */
+export const STALE_PROMPT = "stale";
 
 export interface Labels {
   me: string;
@@ -214,8 +219,8 @@ export const api = {
   togglePause: () => invoke<void>("meeting_toggle_pause"),
   setLanguage: (language: LanguageMode) => invoke<void>("meeting_set_language", { language }),
   preview: (title: string | null) => invoke<string | null>("meeting_preview", { title }),
-  save: (title: string | null) => invoke<string>("meeting_save", { title }),
-  discard: () => invoke<void>("meeting_discard"),
+  save: (title: string | null, token: number) => invoke<string>("meeting_save", { title, token }),
+  discard: (token: number) => invoke<void>("meeting_discard", { token }),
   hide: () => invoke<void>("meeting_window_hide"),
   compact: (compact: boolean) => invoke<void>("meeting_window_compact", { compact }),
   giveBackFocus: () => invoke<void>("meeting_window_give_back_focus"),
