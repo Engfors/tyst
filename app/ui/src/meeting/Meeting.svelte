@@ -269,9 +269,10 @@
     try {
       await api.discard(token);
       saveError = null;
-      // The idle snapshot closes the dialog. Leave it up if that snapshot has not
-      // arrived yet, so the name field does not flash back with the recording gone.
-      if (snap?.phase !== "naming") confirming = false;
+      confirming = false;
+      // A save hides the window after its toast, so it does not remain on the idle screen.
+      // Discard has no note to show; hide the same way, without waiting on that screen.
+      void api.hide();
     } catch (e) {
       if (errorText(e) === STALE_PROMPT) {
         closeStalePrompt();
@@ -328,6 +329,9 @@
       // The name field handles its own Enter and Escape.
       if (e.target instanceof HTMLInputElement) return;
       const decision = namingDecision({ confirming, key: e.key, target: namingTarget(e.target), title });
+      // Space activates a focused button. While confirming, that must not discard;
+      // only Enter on Discard, or a click, does.
+      if (confirming && e.key === " ") e.preventDefault();
       if (decision.type !== "ignore") {
         e.preventDefault();
         run(decision);

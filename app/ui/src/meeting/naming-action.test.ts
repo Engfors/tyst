@@ -41,11 +41,17 @@ test("Enter away from Discard, and a second Escape, keep the recording", () => {
   }
 });
 
-test("Enter on the Discard button is the only key that discards", () => {
+test("Enter on Discard discards; Space does not", () => {
   assert.deepEqual(namingDecision({ confirming: true, key: "Enter", target: "discard", title: "Notes" }), {
     type: "discard",
   });
   assert.deepEqual(namingDecision({ confirming: true, key: " ", target: "discard", title: "Notes" }), {
+    type: "ignore",
+  });
+  assert.deepEqual(namingDecision({ confirming: true, key: " ", target: "keep", title: "Notes" }), {
+    type: "keep",
+  });
+  assert.deepEqual(namingDecision({ confirming: true, key: " ", target: "other", title: "Notes" }), {
     type: "ignore",
   });
   assert.deepEqual(namingDecision({ confirming: false, key: "Enter", target: "discard", title: "Notes" }), {

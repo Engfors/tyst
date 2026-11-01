@@ -32,8 +32,9 @@ export function implicitSave(
 
 /**
  * Keys on the name prompt and on the discard confirmation.
- * While confirming, Enter discards only when Discard itself is focused. Every other Enter, and
- * Escape, keeps the recording and returns to naming.
+ * While confirming, Enter discards only when Discard itself is focused. Space never discards:
+ * on Keep it returns to naming, on Discard it does nothing. Every other Enter, and Escape,
+ * keeps the recording.
  */
 export function namingDecision(opts: {
   confirming: boolean;
@@ -43,6 +44,8 @@ export function namingDecision(opts: {
 }): NamingDecision {
   if (opts.confirming) {
     if (opts.key === "Enter" && opts.target === "discard") return { type: "discard" };
+    if (opts.key === " " && opts.target === "keep") return { type: "keep" };
+    if (opts.key === " " && opts.target === "discard") return { type: "ignore" };
     if (opts.key === "Enter" || opts.key === "Escape") return { type: "keep" };
     return { type: "ignore" };
   }
