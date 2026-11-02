@@ -4,12 +4,16 @@
 
 export type NamingTarget = "input" | "keep" | "discard" | "other";
 
-export type NamingDecision =
+export type NamingDecision = {
+  /** Cancel the browser's default. Space on a focused button would otherwise click it. */
+  preventDefault: boolean;
+} & (
   | { type: "save"; title: string | null }
   | { type: "ask-discard" }
   | { type: "keep" }
   | { type: "discard" }
-  | { type: "ignore" };
+  | { type: "ignore" }
+);
 
 /** Empty and whitespace-only names save as the default title. */
 export function titleToSave(title: string): string | null {
@@ -32,9 +36,9 @@ export function implicitSave(
 
 /**
  * Keys on the name prompt and on the discard confirmation.
- * While confirming, Enter discards only when Discard itself is focused. Space never discards:
- * on Keep it returns to naming, on Discard it does nothing. Every other Enter, and Escape,
- * keeps the recording.
+ * While confirming, Enter discards only when Discard itself is focused. Space on Keep returns
+ * to naming. Any other Space only cancels the key, so a focused Discard button is not clicked.
+ * Every other Enter, and Escape, keeps the recording.
  */
 export function namingDecision(opts: {
   confirming: boolean;
@@ -43,15 +47,17 @@ export function namingDecision(opts: {
   title: string;
 }): NamingDecision {
   if (opts.confirming) {
-    if (opts.key === "Enter" && opts.target === "discard") return { type: "discard" };
-    if (opts.key === " " && opts.target === "keep") return { type: "keep" };
-    if (opts.key === " " && opts.target === "discard") return { type: "ignore" };
-    if (opts.key === "Enter" || opts.key === "Escape") return { type: "keep" };
-    return { type: "ignore" };
+    // Space's default is to activate the focused button. Cancel that for every Space, and
+    // treat Space on Keep as the safe choice. Discard is not a special case: it is not Enter.
+    const preventDefault = opts.key === "Enter" || opts.key === "Escape" || opts.key === " ";
+    if (opts.key === "Enter" && opts.target === "discard") return { type: "discard", preventDefault };
+    if (opts.key === " " && opts.target === "keep") return { type: "keep", preventDefault };
+    if (opts.key === "Enter" || opts.key === "Escape") return { type: "keep", preventDefault };
+    return { type: "ignore", preventDefault };
   }
-  if (opts.key === "Escape") return { type: "ask-discard" };
+  if (opts.key === "Escape") return { type: "ask-discard", preventDefault: true };
   if (opts.key === "Enter" && opts.target === "input") {
-    return { type: "save", title: titleToSave(opts.title) };
+    return { type: "save", title: titleToSave(opts.title), preventDefault: true };
   }
-  return { type: "ignore" };
+  return { type: "ignore", preventDefault: false };
 }

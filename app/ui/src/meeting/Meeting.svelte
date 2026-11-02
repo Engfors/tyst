@@ -163,10 +163,10 @@
 
   function showSaved(path: string) {
     saved = path;
-    clearTimeout(toastTimer);
+      clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       saved = null;
-      if (snap?.phase === "idle") api.hide();
+      if (snap?.phase === "idle") hideMeeting();
     }, 6000);
   }
 
@@ -272,7 +272,7 @@
       confirming = false;
       // A save hides the window after its toast, so it does not remain on the idle screen.
       // Discard has no note to show; hide the same way, without waiting on that screen.
-      void api.hide();
+      hideMeeting();
     } catch (e) {
       if (errorText(e) === STALE_PROMPT) {
         closeStalePrompt();
@@ -311,10 +311,11 @@
 
   function onTitleKey(e: KeyboardEvent) {
     const decision = namingDecision({ confirming, key: e.key, target: "input", title });
-    if (decision.type === "ignore") return;
-    e.preventDefault();
-    e.stopPropagation();
-    run(decision);
+    if (decision.preventDefault) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (decision.type !== "ignore") run(decision);
   }
 
   function namingTarget(target: EventTarget | null): NamingTarget {
@@ -329,16 +330,12 @@
       // The name field handles its own Enter and Escape.
       if (e.target instanceof HTMLInputElement) return;
       const decision = namingDecision({ confirming, key: e.key, target: namingTarget(e.target), title });
-      // Space activates a focused button. While confirming, that must not discard;
-      // only Enter on Discard, or a click, does.
-      if (confirming && e.key === " ") e.preventDefault();
-      if (decision.type !== "ignore") {
-        e.preventDefault();
-        run(decision);
-      }
+      // `preventDefault` is what stops Space from clicking Discard. The policy owns that bit.
+      if (decision.preventDefault) e.preventDefault();
+      if (decision.type !== "ignore") run(decision);
       return;
     }
-    if (e.key === "Escape" && phase === "idle") api.hide();
+    if (e.key === "Escape" && phase === "idle") hideMeeting();
   }
 
   // The header's hide control is not Escape. During the name prompt, including the
@@ -348,7 +345,13 @@
       const action = implicitSave(false, title);
       if (action.type === "save") void saveTitle(action.title, true);
     }
-    void api.hide();
+    hideMeeting();
+  }
+
+  function hideMeeting() {
+    api.hide().catch((e: unknown) => {
+      console.error(`could not hide the meeting window: ${errorText(e)}`);
+    });
   }
 
   // macOS: a click here makes Tyst the active app; hand the keyboard back to the meeting app
