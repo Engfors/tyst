@@ -163,7 +163,7 @@
 
   function showSaved(path: string) {
     saved = path;
-      clearTimeout(toastTimer);
+    clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       saved = null;
       if (snap?.phase === "idle") hideMeeting();
