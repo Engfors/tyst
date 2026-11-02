@@ -75,7 +75,7 @@ jobs:
           cache: npm
           cache-dependency-path: app/ui/package-lock.json
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
-      - run: npm ci --prefix app/ui
+      - run: npm ci --ignore-scripts --prefix app/ui
       - name: Fetch pinned AppImage tools
         run: packaging/linux/fetch-tools.sh
       - name: Bundle
@@ -128,7 +128,7 @@ jobs:
           cache: npm
           cache-dependency-path: app/ui/package-lock.json
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
-      - run: npm ci --prefix app/ui
+      - run: npm ci --ignore-scripts --prefix app/ui
       # Ad-hoc signed: no Apple Developer ID yet (SPEC 10.1), so Gatekeeper asks on first start.
       - name: Bundle
         env:

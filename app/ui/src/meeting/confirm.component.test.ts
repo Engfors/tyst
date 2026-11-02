@@ -161,7 +161,9 @@ describe("discard confirmation", () => {
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     await screen.findByRole("alertdialog");
     // Escape extends a 1s prompt to 10s. An empty name is the default title Meeting.
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(calls.save).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(8_000);
     expect(calls.save).toHaveBeenCalledTimes(1);
     expect(calls.save).toHaveBeenCalledWith(null, 7);
     expect(calls.discard).not.toHaveBeenCalled();

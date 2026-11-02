@@ -21,10 +21,10 @@ detection, updates, releases), [4](docs/phase4-report.md) (AppImage), [3](docs/p
 
 ## Build dependencies
 
-Rust 1.90 or newer, Node 22.6 or newer, a C/C++ toolchain (`g++` and `libstdc++`, or Xcode's command line tools
-on macOS), `meson` and `ninja` (they build WebRTC's echo canceller) and `clang`. Node 22.6 is the
-minimum because `npm run check` in `app/ui` runs the UI tests with `node --experimental-strip-types`.
-CI installs Node 22, which is that line or newer.
+Rust 1.90 or newer, Node 22.22.2 or newer, a C/C++ toolchain (`g++` and `libstdc++`, or Xcode's command line tools
+on macOS), `meson` and `ninja` (they build WebRTC's echo canceller) and `clang`. Node 22.22.2 is the
+minimum because the meeting-window component tests use jsdom, which requires it. `npm run check` in
+`app/ui` also runs `node --experimental-strip-types`. CI installs Node 22, which is that line or newer.
 
 - **Arch:** `sudo pacman -S --needed base-devel clang meson ninja alsa-lib pipewire webkit2gtk-4.1 libayatana-appindicator librsvg xdotool`
 - **Ubuntu 24.04:** `sudo apt install build-essential clang meson ninja-build libasound2-dev libpipewire-0.3-dev libspa-0.2-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev`
