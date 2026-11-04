@@ -76,6 +76,7 @@ fn main() {
             commands::meeting_set_language,
             commands::meeting_preview,
             commands::meeting_save,
+            commands::meeting_discard,
             commands::meeting_window_hide,
             commands::meeting_window_compact,
             commands::meeting_window_give_back_focus,

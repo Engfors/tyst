@@ -62,8 +62,15 @@ pub fn meeting_preview(app: AppHandle, title: Option<String>) -> Option<String> 
 }
 
 #[tauri::command]
-pub fn meeting_save(app: AppHandle, title: Option<String>) -> CmdResult<String> {
-    state::save_meeting(&app, title)
+pub fn meeting_save(app: AppHandle, title: Option<String>, token: u64) -> CmdResult<String> {
+    state::save_meeting(&app, title, token)
+}
+
+/// Confirmed discard from the name prompt: deletes the journal and writes no note.
+/// `token` must be the prompt on screen. A mismatch leaves the current meeting alone.
+#[tauri::command]
+pub fn meeting_discard(app: AppHandle, token: u64) -> CmdResult {
+    state::discard_meeting(&app, token)
 }
 
 #[tauri::command]

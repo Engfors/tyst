@@ -1,9 +1,11 @@
 //! The meeting session's lifecycle, kept free of capture and UI so its races can be tested.
 //!
-//! Idle → Starting → Recording → Stopping → Naming → Saving → Idle. A start only begins from
-//! Idle, so a start that lands while a stop is still joining threads or a save is still writing
-//! does nothing. Stop or quit during Starting cancels the start: the loading thread finds its
-//! generation gone and stops the meeting it just started instead of storing it.
+//! Idle → Starting → Recording → Stopping → Naming → Saving → Idle. From Naming, discard deletes
+//! the recording (Naming → Discarding → Idle) and save writes it. A start only begins from Idle,
+//! so a start that lands while a stop is still joining threads, a save is still writing, or a
+//! discard is still deleting the journal does nothing. Stop or quit during Starting cancels the
+//! start: the loading thread finds its generation gone and stops the meeting it just started
+//! instead of storing it.
 
 /// One meeting's lifecycle. `M` is a running meeting, `S` a stopped one waiting for its name.
 pub enum Session<M, S> {
@@ -21,6 +23,8 @@ pub enum Session<M, S> {
     },
     /// The Markdown file is being written.
     Saving,
+    /// The journal is being deleted. A start or a save finds nothing.
+    Discarding,
 }
 
 /// What [`Session::cancel`] found.
@@ -30,6 +34,11 @@ pub enum Cancel {
     Start,
     Nothing,
 }
+
+/// [`Session::save`] or [`Session::discard`] was asked for a meeting that is not the one waiting.
+/// The session is left as it was.
+#[derive(Debug, PartialEq, Eq)]
+pub struct StalePrompt;
 
 impl<M, S> Session<M, S> {
     /// Idle → Starting. Returns the start's generation, or `None` when not idle.
@@ -100,14 +109,10 @@ impl<M, S> Session<M, S> {
     }
 
     /// Naming → Saving, handing out the stopped meeting and its token.
-    pub fn save(&mut self) -> Option<(S, u64)> {
-        match std::mem::replace(self, Session::Saving) {
-            Session::Naming { stopped, token } => Some((stopped, token)),
-            other => {
-                *self = other;
-                None
-            }
-        }
+    /// `expected` is the prompt the caller is answering. A different meeting now waiting is left
+    /// untouched.
+    pub fn save(&mut self, expected: u64) -> Result<(S, u64), StalePrompt> {
+        self.take(expected, true)
     }
 
     /// Saving → Idle.
@@ -120,6 +125,41 @@ impl<M, S> Session<M, S> {
     /// Saving → Naming: a failed save keeps the meeting so it can be saved again.
     pub fn save_failed(&mut self, stopped: S, token: u64) {
         debug_assert!(matches!(self, Session::Saving));
+        *self = Session::Naming { stopped, token };
+    }
+
+    /// Naming → Discarding, handing out the stopped meeting so the caller can delete its journal.
+    /// Nothing is written. `expected` must be the meeting waiting now; otherwise nothing is taken.
+    /// A later save for this meeting finds nothing until [`Self::discard_failed`].
+    pub fn discard(&mut self, expected: u64) -> Result<(S, u64), StalePrompt> {
+        self.take(expected, false)
+    }
+
+    /// Moves Naming to Saving (`saving`) or Discarding when `expected` is the token in Naming.
+    fn take(&mut self, expected: u64, saving: bool) -> Result<(S, u64), StalePrompt> {
+        if !matches!(self, Session::Naming { token, .. } if *token == expected) {
+            return Err(StalePrompt);
+        }
+        let next = if saving { Session::Saving } else { Session::Discarding };
+        match std::mem::replace(self, next) {
+            Session::Naming { stopped, token } => Ok((stopped, token)),
+            other => {
+                *self = other;
+                Err(StalePrompt)
+            }
+        }
+    }
+
+    /// Discarding → Idle.
+    pub fn discarded(&mut self) {
+        if matches!(self, Session::Discarding) {
+            *self = Session::Idle;
+        }
+    }
+
+    /// Discarding → Naming: a failed delete keeps the meeting so it can be saved or discarded again.
+    pub fn discard_failed(&mut self, stopped: S, token: u64) {
+        debug_assert!(matches!(self, Session::Discarding));
         *self = Session::Naming { stopped, token };
     }
 
@@ -171,21 +211,115 @@ mod tests {
         s.stopped("stopped", 7);
         assert_eq!(s.naming_token(), Some(7));
         assert_eq!(s.start(3), None, "start while naming");
-        let (stopped, token) = s.save().unwrap();
+        let (stopped, token) = s.save(7).unwrap();
         assert_eq!(s.start(4), None, "start while saving");
         // A failed save keeps the meeting.
         s.save_failed(stopped, token);
         assert_eq!(s.naming_token(), Some(7));
-        s.save().unwrap();
+        s.save(7).unwrap();
         s.saved();
         assert_eq!(s.start(5), Some(5));
+    }
+
+    fn at_naming() -> S {
+        let mut s = S::Idle;
+        s.start(1);
+        s.begin(1, "m").unwrap();
+        s.stop().unwrap();
+        s.stopped("notes", 7);
+        s
+    }
+
+    #[test]
+    fn keep_leaves_the_meeting_named_so_a_later_save_writes_it() {
+        let mut s = at_naming();
+        // Closing the prompt without discard stays here; the caller can still save.
+        assert_eq!(s.naming_token(), Some(7));
+        let (stopped, token) = s.save(7).unwrap();
+        assert_eq!((stopped, token), ("notes", 7));
+        assert!(matches!(s, Session::Saving));
+        s.saved();
+        assert!(matches!(s, Session::Idle));
+        assert!(s.save(7).is_err());
+        assert!(s.discard(7).is_err());
+    }
+
+    #[test]
+    fn discard_takes_the_meeting_and_a_later_save_finds_nothing() {
+        let mut s = at_naming();
+        let (stopped, token) = s.discard(7).unwrap();
+        assert_eq!((stopped, token), ("notes", 7));
+        assert!(matches!(s, Session::Discarding));
+        assert_eq!(s.naming_token(), None);
+        assert_eq!(s.start(9), None, "start while the journal is being deleted");
+        assert!(s.save(7).is_err(), "save while discarding");
+        assert!(s.discard(7).is_err());
+        s.discarded();
+        assert!(matches!(s, Session::Idle));
+        assert!(s.save(7).is_err());
+    }
+
+    #[test]
+    fn failed_discard_returns_to_naming_and_save_still_works() {
+        let mut s = at_naming();
+        let (stopped, token) = s.discard(7).unwrap();
+        s.discard_failed(stopped, token);
+        assert_eq!(s.naming_token(), Some(7));
+        let (stopped, token) = s.save(7).unwrap();
+        assert_eq!((stopped, token), ("notes", 7));
+        s.saved();
+        assert!(matches!(s, Session::Idle));
+    }
+
+    fn newer_meeting() -> S {
+        let mut s = at_naming();
+        s.save(7).unwrap();
+        s.saved();
+        s.start(2).unwrap();
+        s.begin(2, "m2").unwrap();
+        s.stop().unwrap();
+        s.stopped("newer", 9);
+        s
+    }
+
+    #[test]
+    fn stale_token_cannot_discard_or_save_a_newer_meeting() {
+        let mut saved = newer_meeting();
+        assert_eq!(saved.save(7), Err(StalePrompt));
+        assert_eq!(saved.discard(7), Err(StalePrompt));
+        assert!(matches!(saved, Session::Naming { stopped: "newer", token: 9 }));
+        let (stopped, token) = saved.save(9).unwrap();
+        assert_eq!((stopped, token), ("newer", 9));
+
+        let mut discarded = newer_meeting();
+        assert_eq!(discarded.save(7), Err(StalePrompt));
+        assert_eq!(discarded.discard(7), Err(StalePrompt));
+        assert!(matches!(discarded, Session::Naming { stopped: "newer", token: 9 }));
+        let (stopped, token) = discarded.discard(9).unwrap();
+        assert_eq!((stopped, token), ("newer", 9));
+        assert!(matches!(discarded, Session::Discarding));
+    }
+
+    #[test]
+    fn discard_does_nothing_outside_naming() {
+        let mut s = S::Idle;
+        assert!(s.discard(1).is_err());
+        s.start(1);
+        assert!(s.discard(1).is_err());
+        assert!(s.is_starting(1));
+        s.begin(1, "m").unwrap();
+        assert!(s.discard(1).is_err());
+        assert!(matches!(s, Session::Recording("m")));
+        s.stop().unwrap();
+        assert!(s.discard(1).is_err());
+        assert!(matches!(s, Session::Stopping));
     }
 
     #[test]
     fn stop_and_save_do_nothing_in_other_states() {
         let mut s = S::Idle;
         assert_eq!(s.stop(), None);
-        assert!(s.save().is_none());
+        assert!(s.save(1).is_err());
         assert!(matches!(s, Session::Idle));
         s.start(1);
         assert_eq!(s.stop(), None);

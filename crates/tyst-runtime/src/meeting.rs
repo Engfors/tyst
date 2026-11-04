@@ -402,6 +402,31 @@ impl StoppedMeeting {
         Ok(path)
     }
 
+    /// Deletes the journal and writes no Markdown file. A missing journal counts as discarded.
+    /// On failure the meeting comes back with the journal still in place, so it can be saved or
+    /// discarded again, and no note file is left behind.
+    pub fn discard(self) -> Result<()> {
+        self.try_discard().map_err(|f| f.1)
+    }
+
+    /// [`Self::discard`] that hands the meeting back when deleting the journal fails.
+    pub fn try_discard(mut self) -> std::result::Result<(), Box<(Self, crate::Error)>> {
+        let Some(journal) = self.journal.as_ref() else {
+            log::info!("meeting {} discarded", self.session.info.id);
+            return Ok(());
+        };
+        let path = journal.path().to_path_buf();
+        if let Err(source) = std::fs::remove_file(&path)
+            && source.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(Box::new((self, tyst_core::Error::io(&path, source).into())));
+        }
+        // The directory entry is gone. Drop the handle (it still refers to the unlinked inode).
+        self.journal.take();
+        log::info!("meeting {} discarded", self.session.info.id);
+        Ok(())
+    }
+
     pub fn transcripts_dir(&self) -> &Path {
         &self.transcripts_dir
     }
@@ -889,6 +914,88 @@ mod tests {
         assert!(md.contains("**Me:** 2.") && md.contains("**Others:** 3."), "{md}");
         assert!(tyst_core::journal::find_orphans(&dir).unwrap().is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn save_without_a_title_uses_meeting_and_removes_the_journal() {
+        let dir = tmp("default-title");
+        let (meeting, _rx) = start(&dir, vec![source(Channel::Me, vec![(0.2, false)], Duration::ZERO)]);
+        let path = meeting.stop().unwrap().save(None).unwrap();
+        let md = std::fs::read_to_string(&path).unwrap();
+        assert!(md.contains("title: Meeting\n"), "{md}");
+        assert!(path.file_name().unwrap().to_string_lossy().contains("Meeting"));
+        assert!(tyst_core::journal::find_orphans(&dir).unwrap().is_empty());
+        assert!(files_ending(&dir, &[".part", ".jsonl"]).is_empty(), "a partial note was left behind");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn discard_removes_the_journal_and_writes_no_note() {
+        let dir = tmp("discard");
+        let (meeting, _rx) = start(&dir, vec![source(Channel::Me, vec![(0.2, false)], Duration::ZERO)]);
+        let stopped = meeting.stop().unwrap();
+        assert_eq!(tyst_core::journal::find_orphans(&dir).unwrap().len(), 1);
+        let note = stopped.preview_path(None);
+        stopped.discard().unwrap();
+        assert!(tyst_core::journal::find_orphans(&dir).unwrap().is_empty());
+        assert!(!note.exists());
+        assert!(files_ending(&dir, &[".md", ".part", ".jsonl"]).is_empty(), "discard left a transcript behind");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_discard_leaves_the_journal_and_save_still_writes_the_note() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tmp("discard-fail");
+        let (meeting, _rx) = start(&dir, vec![source(Channel::Me, vec![(0.2, false)], Duration::ZERO)]);
+        let stopped = meeting.stop().unwrap();
+        let journal_dir = tyst_core::journal::find_orphans(&dir).unwrap()[0].parent().unwrap().to_path_buf();
+        // Unlink needs write permission on the directory. Restored on drop so the temp dir can go.
+        struct AllowDelete(PathBuf);
+        impl Drop for AllowDelete {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+            }
+        }
+        let _allow = AllowDelete(journal_dir.clone());
+        std::fs::set_permissions(&journal_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        let Err(failed) = stopped.try_discard() else {
+            panic!("discard should fail while the journal directory is not writable");
+        };
+        std::fs::set_permissions(&journal_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let (stopped, _) = *failed;
+        assert_eq!(tyst_core::journal::find_orphans(&dir).unwrap().len(), 1);
+        assert!(files_ending(&dir, &[".md", ".part"]).is_empty());
+
+        let path = stopped.save(None).unwrap();
+        let md = std::fs::read_to_string(&path).unwrap();
+        assert!(md.contains("title: Meeting\n"), "{md}");
+        assert!(tyst_core::journal::find_orphans(&dir).unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Files under `dir` whose names end with one of `suffixes`. An empty journal directory is
+    /// not a note.
+    fn files_ending(dir: &Path, suffixes: &[&str]) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        fn walk(dir: &Path, suffixes: &[&str], out: &mut Vec<PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(&path, suffixes, out);
+                } else {
+                    let name = path.file_name().unwrap().to_string_lossy();
+                    if suffixes.iter().any(|s| name.ends_with(s)) {
+                        out.push(path);
+                    }
+                }
+            }
+        }
+        walk(dir, suffixes, &mut out);
+        out
     }
 
     #[test]
