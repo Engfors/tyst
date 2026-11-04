@@ -63,7 +63,12 @@ pub struct Naming {
     pub placeholder: String,
     pub path_preview: String,
     pub seconds: u32,
+    /// Identifies this prompt. Save and discard from the window must send it back.
+    pub token: u64,
 }
+
+/// Returned when a name prompt acts on a meeting that is no longer the one waiting.
+pub const STALE_PROMPT: &str = "stale";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -145,7 +150,7 @@ impl AppState {
             Session::Starting { .. } => Phase::Starting,
             Session::Recording(m) if m.is_paused() => Phase::Paused,
             Session::Recording(_) => Phase::Recording,
-            Session::Stopping => Phase::Stopping,
+            Session::Stopping | Session::Discarding => Phase::Stopping,
             Session::Naming { .. } | Session::Saving => Phase::Naming,
         }
     }
@@ -161,7 +166,7 @@ impl AppState {
         let phase = self.phase();
         let cfg = self.config();
         let naming = match &*self.session.lock().expect("session lock") {
-            Session::Naming { stopped, .. } => Some(naming_info(stopped, &cfg)),
+            Session::Naming { stopped, token, .. } => Some(naming_info(stopped, &cfg, *token)),
             _ => None,
         };
         let live = self.live.lock().expect("live lock");
@@ -299,12 +304,13 @@ impl AppState {
     }
 }
 
-fn naming_info(stopped: &StoppedMeeting, cfg: &Config) -> Naming {
+fn naming_info(stopped: &StoppedMeeting, cfg: &Config, token: u64) -> Naming {
     let placeholder = format!("{} Meeting", stopped.session().info.started_at.format("%Y-%m-%d %H%M"));
     Naming {
         placeholder,
         path_preview: stopped.preview_path(None).display().to_string(),
         seconds: cfg.meetings.name_prompt_seconds,
+        token,
     }
 }
 
@@ -315,7 +321,7 @@ pub fn start_meeting(app: &AppHandle) -> Result<(), String> {
     crate::dictation::send(app, crate::dictation::Cmd::PromptAnswer(false));
     let st = app.state::<AppState>();
     if st.phase() == Phase::Naming {
-        save_meeting(app, None)?;
+        save_current_meeting(app, None)?;
     }
     let generation = {
         let mut session = st.session.lock().expect("session lock");
@@ -560,7 +566,9 @@ pub fn stop_meeting(app: &AppHandle) -> Result<(), String> {
         let still_waiting = st.session.lock().expect("session lock").naming_token() == Some(token);
         if still_waiting {
             log::info!("name prompt timed out, saving with the timestamp name");
-            if let Err(e) = save_meeting(&app, None) {
+            if let Err(e) = save_meeting(&app, None, token)
+                && e != STALE_PROMPT
+            {
                 log::error!("saving meeting: {e}");
             }
         }
@@ -600,12 +608,64 @@ pub fn preview_path(app: &AppHandle, title: Option<&str>) -> Option<String> {
     }
 }
 
-/// Saves the stopped meeting (an empty title uses the timestamp name).
-pub fn save_meeting(app: &AppHandle, title: Option<String>) -> Result<String, String> {
+/// Deletes the stopped meeting's journal and writes no note. `token` is the prompt the window
+/// is answering. A different meeting now waiting is left untouched ([`STALE_PROMPT`]). The
+/// meeting stays in naming if the journal cannot be removed, so it can be saved or discarded again.
+pub fn discard_meeting(app: &AppHandle, token: u64) -> Result<(), String> {
     let st = app.state::<AppState>();
-    let Some((stopped, token)) = st.session.lock().expect("session lock").save() else {
-        return Err("no meeting waiting to be saved".into());
+    let (stopped, token) =
+        st.session.lock().expect("session lock").discard(token).map_err(|_| STALE_PROMPT.to_string())?;
+    // The name prompt is the one time this window takes the keyboard. Give it back either way;
+    // a failed discard asks for it again, the same as a failed save.
+    windows::focus_for_typing(app, false);
+    match stopped.try_discard() {
+        Ok(()) => {
+            st.session.lock().expect("session lock").discarded();
+            {
+                let mut live = st.live.lock().expect("live lock");
+                live.segments.clear();
+                live.partials.clear();
+                live.warning = None;
+            }
+            st.emit_state(app);
+            Ok(())
+        }
+        Err(failed) => {
+            let (stopped, e) = *failed;
+            st.session.lock().expect("session lock").discard_failed(stopped, token);
+            let message = format!("Could not discard the meeting: {e}");
+            st.live.lock().expect("live lock").warning = Some(message.clone());
+            st.emit_state(app);
+            let _ = app.emit(MEETING_EVENT, UiEvent::Warning { message });
+            windows::focus_for_typing(app, true);
+            Err(e.to_string())
+        }
+    }
+}
+
+/// Saves the stopped meeting (an empty title uses the timestamp name). `token` is the prompt
+/// the window is answering. A different meeting now waiting is left untouched ([`STALE_PROMPT`]).
+pub fn save_meeting(app: &AppHandle, title: Option<String>, token: u64) -> Result<String, String> {
+    let st = app.state::<AppState>();
+    let (stopped, token) =
+        st.session.lock().expect("session lock").save(token).map_err(|_| STALE_PROMPT.to_string())?;
+    commit_save(app, stopped, token, title)
+}
+
+/// Saves whichever meeting is waiting for a name. Quit and a new start use this; the window
+/// passes the token it was shown instead ([`save_meeting`]).
+pub fn save_current_meeting(app: &AppHandle, title: Option<String>) -> Result<String, String> {
+    let st = app.state::<AppState>();
+    let (stopped, token) = {
+        let mut session = st.session.lock().expect("session lock");
+        let token = session.naming_token().ok_or_else(|| "no meeting waiting to be saved".to_string())?;
+        session.save(token).map_err(|_| "no meeting waiting to be saved".to_string())?
     };
+    commit_save(app, stopped, token, title)
+}
+
+fn commit_save(app: &AppHandle, stopped: StoppedMeeting, token: u64, title: Option<String>) -> Result<String, String> {
+    let st = app.state::<AppState>();
     windows::focus_for_typing(app, false);
     match stopped.try_save(title) {
         Ok(path) => {
@@ -640,7 +700,7 @@ pub fn shutdown(app: &AppHandle) {
         return;
     }
     if app.state::<AppState>().phase() == Phase::Naming {
-        let _ = save_meeting(app, None);
+        let _ = save_current_meeting(app, None);
     }
 }
 

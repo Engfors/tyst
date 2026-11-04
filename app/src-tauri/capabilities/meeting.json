@@ -9,6 +9,7 @@
     "core:default",
     "core:window:allow-start-dragging",
     "allow-app-state",
+    "allow-meeting-discard",
     "allow-meeting-preview",
     "allow-meeting-save",
     "allow-meeting-set-language",
