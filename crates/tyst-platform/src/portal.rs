@@ -259,8 +259,9 @@ pub fn wtype_args(shift: bool) -> &'static [&'static str] {
 }
 
 /// Ctrl+V (Ctrl+Shift+V in a terminal) through `wtype`, which speaks Wayland's virtual-keyboard
-/// protocol. Omarchy ships `wtype`. Hyprland's portal has no RemoteDesktop, so this is the paste
-/// path there; [`ydotool_paste`] is the fallback when `wtype` is not installed.
+/// protocol. Omarchy ships `wtype`. It is not the Hyprland paste path: there, `wtype` Ctrl+V
+/// exits 0 and inserts nothing into a GTK 3 field. Hyprland paste is
+/// [`crate::hyprland::Hyprland::send_paste_chord`].
 pub fn wtype_paste(shift: bool) -> Result<(), DesktopError> {
     let status = crate::appimage::host_command("wtype")
         .args(wtype_args(shift))
@@ -271,8 +272,7 @@ pub fn wtype_paste(shift: bool) -> Result<(), DesktopError> {
 
 /// Fallback only when the portal is missing ([`DesktopError::PortalMissing`]), never after the
 /// user refused the portal's dialog: Ctrl+V (Ctrl+Shift+V) through `ydotool`, which needs
-/// `ydotoold` running and access to `/dev/uinput` (SPEC 10.2, set up by the user). On Hyprland,
-/// where the portal has no RemoteDesktop, this runs only after [`wtype_paste`] fails.
+/// `ydotoold` running and access to `/dev/uinput` (SPEC 10.2, set up by the user).
 pub fn ydotool_paste(shift: bool) -> Result<(), DesktopError> {
     // Linux input event codes: KEY_LEFTCTRL 29, KEY_LEFTSHIFT 42, KEY_V 47.
     let keys: &[&str] =

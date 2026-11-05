@@ -142,7 +142,7 @@
           </span>
         </div>
         {#if view.compositor === "hyprland"}
-          <p class="muted small">Paste uses wtype (Ctrl+V, or Ctrl+Shift+V in a terminal). Omarchy includes wtype. ydotool is the fallback. If the shortcut dialog does not appear, add these lines to hyprland.conf:</p>
+          <p class="muted small">Paste asks Hyprland to press Ctrl+V, or Ctrl+Shift+V in a terminal. If that cannot be sent, the text stays on the clipboard. If the shortcut dialog does not appear, add these lines to hyprland.conf:</p>
           {#if view.hyprland_binds}<pre class="mono">{view.hyprland_binds}</pre>{/if}
         {:else}
           <div class="check">

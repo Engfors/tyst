@@ -7,8 +7,9 @@ for a version is the text of its GitHub release and of the update notice in Sett
 
 Features
 - Omarchy / Hyprland: window rules for classic configs and for Hyprland 0.56 Lua (`hl.window_rule`),
-  IPC that uses `hl.dsp.*` when classic dispatches are rejected, paste through `wtype` with
-  `ydotool` as the fallback. The tray stays the existing StatusNotifierItem (quickshell on Omarchy).
+  IPC that uses `hl.dsp.*` when classic dispatches are rejected, paste through Hyprland's
+  `send_key_state` (Ctrl+V, Ctrl+Shift+V in a terminal). The tray stays the existing
+  StatusNotifierItem (quickshell on Omarchy).
 - Custom vocabulary now helps recognition, not only spelling: terms, and replacements that join
   words (`terra form → Terraform`), make the model more likely to hear them as written. Swedish
   (and auto) keep phrase boosting on by default; forced English (Parakeet) does not, after the
@@ -17,6 +18,9 @@ Features
 - `tyst-cli bench --boost 0.25,0.5,1` scores boosted decoding next to the plain rows.
 
 Fixes
+- Hyprland paste no longer uses `wtype`. That shortcut exits 0 and inserts nothing into GTK 3
+  fields. Tyst asks Hyprland to press Ctrl+V (Ctrl+Shift+V in a terminal) as a key-down and a
+  key-up. If the dispatch fails, the text stays on the clipboard and the pill says so.
 - Escape on the meeting name prompt asks "Discard this recording?" before deleting it. Keep is
   focused, so Enter or Escape again returns to the name field with the typed name. Saving with an
   empty name, or closing the window another way, still uses the title Meeting. A prompt left open

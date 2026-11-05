@@ -413,8 +413,12 @@ and does not edit the user's Hyprland config; the user adds `source = <that file
   layout (logical pixels). Monitor `reserved` is `[left, top, right, bottom]`; a top bar does
   not move the pill's bottom edge.
 - **Paste:** xdg-desktop-portal-hyprland has GlobalShortcuts and no RemoteDesktop. Paste is
-  `wtype` (Ctrl+V, Ctrl+Shift+V in a terminal), then `ydotool`. Clipboard save-and-restore is
-  unchanged.
+  Hyprland `sendkeystate` / `hl.dsp.send_key_state`: Ctrl+V, or Ctrl+Shift+V when the focused
+  window's class (`hyprctl activewindow -j`) is a terminal, sent as a key-down and a key-up.
+  The window target is omitted so the chord hits the focused surface. This does not require
+  Omarchy. If the dispatch fails, the text stays on the clipboard and the pill says so.
+  Clipboard save-and-restore after a sent shortcut is unchanged. `wtype` is not used: it exits
+  0 when a GTK 3 field ignores Ctrl+V.
 - **Shortcuts and tray:** the existing GlobalShortcuts portal and the StatusNotifierItem tray.
   On Omarchy the tray host is quickshell. If the portal does not name a key, a Hyprland `bind`
   or Omarchy `o.bind` for `tyst --dictate` and `tyst --toggle-meeting`.
