@@ -76,6 +76,28 @@ jobs:
       # Ignored advisories and the reasons are in .cargo/audit.toml.
       - run: cargo audit
 
+  notices:
+    name: third-party notices
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      # Prebuilt cargo-about, same pinned action as cargo-audit. 0.9.3 matches
+      # `cargo install cargo-about --version 0.9.3 --locked`; this action's
+      # unversioned cargo-about still resolves to 0.9.2.
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-about@0.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # generate.sh overwrites the committed file. Diff it against the checkout copy.
+      - name: Fail if THIRD_PARTY_NOTICES.md drifted from Cargo.lock
+        run: |
+          cp THIRD_PARTY_NOTICES.md "${RUNNER_TEMP}/THIRD_PARTY_NOTICES.md"
+          packaging/notices/generate.sh
+          diff -u "${RUNNER_TEMP}/THIRD_PARTY_NOTICES.md" THIRD_PARTY_NOTICES.md
+
   eval:
     name: eval harness tests
     runs-on: ubuntu-latest
