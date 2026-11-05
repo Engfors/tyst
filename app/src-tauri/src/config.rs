@@ -131,8 +131,21 @@ pub struct DictationSettings {
     pub keyboard_token: Option<String>,
 }
 
-pub const DEFAULT_TERMINALS: &[&str] =
-    &["com.mitchellh.ghostty", "org.kde.konsole", "kitty", "alacritty", "foot", "wezterm"];
+/// Classes that paste with Ctrl+Shift+V. The `org.omarchy.*` entries and `TUI.float` are
+/// Omarchy's own terminal windows (its terminal tag matches `org.omarchy.*` and `TUI.*`).
+/// Ghostty under `org.omarchy.terminal` treats Ctrl+V as a literal ^V.
+pub const DEFAULT_TERMINALS: &[&str] = &[
+    "com.mitchellh.ghostty",
+    "org.kde.konsole",
+    "kitty",
+    "alacritty",
+    "foot",
+    "wezterm",
+    "org.omarchy.terminal",
+    "org.omarchy.bash",
+    "org.omarchy.btop",
+    "TUI.float",
+];
 
 impl Default for DictationSettings {
     fn default() -> Self {
@@ -316,12 +329,21 @@ mod tests {
     #[test]
     fn spots_terminals() {
         let list: Vec<String> = DEFAULT_TERMINALS.iter().map(|s| s.to_string()).collect();
-        for class in
-            ["org.kde.konsole", "com.mitchellh.ghostty", "kitty", "Alacritty", "foot", "org.wezfurlong.wezterm"]
-        {
+        for class in [
+            "org.kde.konsole",
+            "com.mitchellh.ghostty",
+            "kitty",
+            "Alacritty",
+            "foot",
+            "org.wezfurlong.wezterm",
+            "org.omarchy.terminal",
+            "org.omarchy.bash",
+            "org.omarchy.btop",
+            "TUI.float",
+        ] {
             assert!(is_terminal(class, &list), "{class}");
         }
-        for class in ["org.kde.kate", "firefox", "Slack", "code", ""] {
+        for class in ["org.kde.kate", "firefox", "Slack", "code", "gtk3-demo", "org.gtk.Demo4", ""] {
             assert!(!is_terminal(class, &list), "{class}");
         }
         // A bare class matches a reverse-DNS entry too (X11 WM_CLASS "konsole").

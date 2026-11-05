@@ -548,6 +548,10 @@ mod tests {
         .unwrap();
         assert_eq!(hyprland_paste_chord(&gtk.class, &list), PasteChord::CtrlV);
         assert_eq!(hyprland_paste_chord("kitty", &list), PasteChord::CtrlShiftV);
+        // Omarchy's own terminals are not `foot` or `kitty`. Ctrl+V there inserts a literal ^V.
+        for class in ["org.omarchy.terminal", "org.omarchy.bash", "org.omarchy.btop", "TUI.float"] {
+            assert_eq!(hyprland_paste_chord(class, &list), PasteChord::CtrlShiftV, "{class}");
+        }
         assert_eq!(hyprland_paste_chord("", &list), PasteChord::CtrlV);
         assert_eq!(hyprland_paste_chord("gtk3-demo", &list), PasteChord::CtrlV);
 

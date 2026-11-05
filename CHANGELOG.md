@@ -20,7 +20,10 @@ Features
 Fixes
 - Hyprland paste no longer uses `wtype`. That shortcut exits 0 and inserts nothing into GTK 3
   fields. Tyst asks Hyprland to press Ctrl+V (Ctrl+Shift+V in a terminal) as a key-down and a
-  key-up. If the dispatch fails, the text stays on the clipboard and the pill says so.
+  key-up. If the dispatch fails, the text stays on the clipboard and the pill says so. The
+  default terminal list includes Omarchy's `org.omarchy.terminal`, `org.omarchy.bash`,
+  `org.omarchy.btop`, and `TUI.float`. A config that already saved its terminal list keeps that
+  list.
 - Escape on the meeting name prompt asks "Discard this recording?" before deleting it. Keep is
   focused, so Enter or Escape again returns to the name field with the typed name. Saving with an
   empty name, or closing the window another way, still uses the title Meeting. A prompt left open
