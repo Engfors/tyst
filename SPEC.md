@@ -312,7 +312,7 @@ models: [pianissimo-sv-int8@<rev>, parakeet-tdt-0.6b-v3-int8@<rev>]
 **Paste mechanics**
 - Remember the focused app/window when dictation starts; paste goes there.
 - Put text on the clipboard → synthesize paste keystroke → **restore the previous clipboard** after ~500 ms (setting, on by default).
-- Terminals: on Linux, detect terminal windows (window class list, default includes `com.mitchellh.ghostty`, `org.kde.konsole`, `kitty`, `alacritty`, `foot`, `wezterm`, `org.omarchy.terminal`, `org.omarchy.bash`, `org.omarchy.btop`, `TUI.float`) and send **Ctrl+Shift+V** instead of Ctrl+V. macOS terminals accept Cmd+V.
+- Terminals: on Linux, detect terminal windows (window class list, default includes `com.mitchellh.ghostty`, `org.kde.konsole`, `kitty`, `alacritty`, `foot`, `wezterm`, `org.omarchy.terminal`, `org.omarchy.bash`, `org.omarchy.btop`, `TUI.float`) and send **Ctrl+Shift+V** instead of Ctrl+V. A saved list from before the Omarchy classes were defaults gets the missing ones appended once on load; classes the user added or removed stay in place, and deleting an Omarchy class after that merge does not put it back. macOS terminals accept Cmd+V.
 - Trailing whitespace/newline is never added automatically (so nothing is executed in a terminal by accident).
 
 **Language:** Auto by default (same router as meetings, but no meeting prior — each utterance stands alone, short utterances default to the last used language). Quick toggle in the pill via Tab: Auto → SV → EN.
