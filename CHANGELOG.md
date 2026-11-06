@@ -5,18 +5,6 @@ for a version is the text of its GitHub release and of the update notice in Sett
 
 ## Unreleased
 
-Features
-- Omarchy / Hyprland: window rules for classic configs and for Hyprland 0.56 Lua (`hl.window_rule`),
-  IPC that uses `hl.dsp.*` when classic dispatches are rejected, paste through Hyprland's
-  `send_key_state` (Ctrl+V, Ctrl+Shift+V in a terminal). The tray stays the existing
-  StatusNotifierItem (quickshell on Omarchy).
-- Custom vocabulary now helps recognition, not only spelling: terms, and replacements that join
-  words (`terra form → Terraform`), make the model more likely to hear them as written. Swedish
-  (and auto) keep phrase boosting on by default; forced English (Parakeet) does not, after the
-  issue #38 `fleurs-en` term-free WER check. An on/off switch and a per-rule "listen" box remain
-  in Settings › Vocabulary. Existing installs download one small file (360 KB) from there first.
-- `tyst-cli bench --boost 0.25,0.5,1` scores boosted decoding next to the plain rows.
-
 Fixes
 - Hyprland paste no longer uses `wtype`. That shortcut exits 0 and inserts nothing into GTK 3
   fields. Tyst asks Hyprland to press Ctrl+V (Ctrl+Shift+V in a terminal) as a key-down and a
@@ -29,6 +17,28 @@ Fixes
   focused, so Enter or Escape again returns to the name field with the typed name. Saving with an
   empty name, or closing the window another way, still uses the title Meeting. A prompt left open
   from an earlier meeting cannot save or discard the one that is waiting now.
+- The lockfile moves off the yanked async-executor 1.14.0 (a use-after-free in `Executor::drop`).
+  zbus accepts 1.14.1, which is what is pinned now (#63).
+
+## 0.2.0 - 2026-10-31
+
+Omarchy (Hyprland) now gets the floating meeting window and dictation pill, and custom vocabulary
+can change what the model hears, not only how the text is spelled.
+
+Features
+- Omarchy / Hyprland: window rules for classic configs and for Hyprland 0.56 Lua (`hl.window_rule`),
+  IPC that uses `hl.dsp.*` when classic dispatches are rejected, paste through `wtype` with
+  `ydotool` as the fallback. The tray stays the existing StatusNotifierItem (quickshell on Omarchy).
+  Add `dofile("~/.config/tyst/hyprland.lua")` on Omarchy, or `source = ~/.config/tyst/hyprland.conf`
+  on a classic config, then reload Hyprland and restart Tyst.
+- Custom vocabulary now helps recognition, not only spelling: terms, and replacements that join
+  words (`terra form → Terraform`), make the model more likely to hear them as written. Swedish
+  (and auto) keep phrase boosting on by default; forced English (Parakeet) does not, after the
+  issue #38 `fleurs-en` term-free WER check. An on/off switch and a per-rule "listen" box remain
+  in Settings › Vocabulary. Existing installs download one small file (360 KB) from there first.
+- `tyst-cli bench --boost 0.25,0.5,1` scores boosted decoding next to the plain rows.
+
+Fixes
 - Finishing onboarding again after the settings could not be saved now starts meeting detection,
   the update check and idle model unload.
 
