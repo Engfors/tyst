@@ -193,10 +193,10 @@ mod linux {
     }
 
     /// What to show when the portal session ends. Hyprland's portal implements GlobalShortcuts,
-    /// but not every setup shows the KDE-style binding dialog, so the hint is a `bind` line.
+    /// but not every setup shows the KDE-style binding dialog, so the hint is Omarchy's `o.bind`.
     fn shortcut_error(error: &str) -> String {
         if tyst_platform::hyprland::is_hyprland() {
-            format!("{error}. If no key was bound, add to hyprland.conf:\n{}", crate::hyprland::BIND_HINT)
+            format!("{error}. If no key was bound, add to ~/.config/hypr/bindings.lua:\n{}", crate::hyprland::BIND_HINT)
         } else {
             format!(
                 "{error}. Tyst needs the desktop's GlobalShortcuts portal (KDE Plasma 6, GNOME 48 or newer); \

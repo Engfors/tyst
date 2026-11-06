@@ -142,7 +142,7 @@
           </span>
         </div>
         {#if view.compositor === "hyprland"}
-          <p class="muted small">Paste asks Hyprland to press Ctrl+V, or Ctrl+Shift+V in a terminal. If that cannot be sent, the text stays on the clipboard. If the shortcut dialog does not appear, add these lines to hyprland.conf:</p>
+          <p class="muted small">Paste asks Hyprland to press Ctrl+V, or Ctrl+Shift+V in a terminal. If that cannot be sent, the text stays on the clipboard. If the shortcut dialog does not appear, add these lines to <span class="mono">~/.config/hypr/bindings.lua</span>. A classic config, not Lua, uses <span class="mono">bind = CTRL, aring, exec, tyst --dictate</span> and <span class="mono">bind = CTRL SHIFT, aring, exec, tyst --toggle-meeting</span> in hyprland.conf instead.</p>
           {#if view.hyprland_binds}<pre class="mono">{view.hyprland_binds}</pre>{/if}
         {:else}
           <div class="check">

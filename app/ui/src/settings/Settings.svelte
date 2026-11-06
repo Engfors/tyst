@@ -220,7 +220,7 @@
             <div class="row">
               <button onclick={rebind}>Set up again</button>
               {#if view.hyprland_binds}
-                <span class="muted small">If no dialog appears, add these lines to hyprland.conf (use the real path to tyst if it is not on PATH).</span>
+                <span class="muted small">If no dialog appears, add these lines to ~/.config/hypr/bindings.lua (use the real path to tyst if it is not on PATH). A classic config, not Lua, uses <span class="mono">bind = CTRL, aring, exec, tyst --dictate</span> and <span class="mono">bind = CTRL SHIFT, aring, exec, tyst --toggle-meeting</span> in hyprland.conf instead.</span>
               {:else}
                 <span class="muted small">Change the keys in System Settings › Keyboard › Shortcuts › Tyst.</span>
               {/if}
