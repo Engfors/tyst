@@ -257,7 +257,7 @@
         {#if view.compositor === "hyprland"}
           <div class="field">
             <span class="name">Paste</span>
-            <span class="muted small">Tyst pastes with wtype (Ctrl+V, Ctrl+Shift+V in a terminal). Omarchy includes wtype. If wtype is missing, Tyst tries ydotool. The previous clipboard text is put back when that option is on.</span>
+            <span class="muted small">Tyst asks Hyprland to press Ctrl+V (Ctrl+Shift+V in a terminal). If that cannot be sent, the text stays on the clipboard and the pill says so. The previous clipboard text is put back when the shortcut was sent and that option is on.</span>
           </div>
         {:else if view.platform === "linux"}
           <div class="field">

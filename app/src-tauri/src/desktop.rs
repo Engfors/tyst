@@ -3,9 +3,10 @@
 //!
 //! Linux: KWin scripting (KDE) or Hyprland IPC finds and re-activates the window and places the
 //! pill; other desktops hand focus back on their own. The RemoteDesktop portal types the keystroke
-//! (with `ydotool` as a fallback). Hyprland's portal has no RemoteDesktop, so paste there is
-//! `wtype` and then `ydotool`. Terminals get Ctrl+Shift+V. macOS: the frontmost app is
-//! re-activated and Cmd+V posted. Nothing here logs clipboard text or window titles.
+//! (with `ydotool` as a fallback). Hyprland's portal has no RemoteDesktop. Paste there is
+//! Hyprland's own shortcut (Ctrl+V, Ctrl+Shift+V in a terminal), not `wtype`: `wtype` Ctrl+V
+//! exits 0 and inserts nothing into GTK 3 fields. macOS: the frontmost app is re-activated and
+//! Cmd+V posted. Nothing here logs clipboard text or window titles.
 
 use std::time::Duration;
 
@@ -343,13 +344,16 @@ impl Desktop {
         keyboard_token: Option<String>,
     ) -> Result<(Pasted, Option<String>), String> {
         let previous = if restore { self.clipboard.text() } else { None };
-        let terminal = target.class().is_some_and(|c| crate::config::is_terminal(c, terminals));
+        // `class` is the `class` field of `hyprctl activewindow -j` from when dictation started.
+        // Paste focuses that window before the keystroke. Hyprland's chord uses the same class.
+        let class = target.class().unwrap_or("");
+        let terminal = crate::config::is_terminal(class, terminals);
         // A newline pasted into a terminal runs what came before it as a command.
         let text = if terminal { single_line(text) } else { std::borrow::Cow::Borrowed(text) };
         self.clipboard.set_text(&text, restore).map_err(|e| e.to_string())?;
         self.return_to(target).await;
         tokio_sleep(FOCUS_SETTLE).await;
-        let (pasted, token) = self.keystroke(terminal, keyboard_token).await;
+        let (pasted, token) = self.keystroke(terminal, class, terminals, keyboard_token).await;
         if pasted == Pasted::Typed
             && let Some(prev) = previous
         {
@@ -362,11 +366,18 @@ impl Desktop {
     }
 
     #[cfg(target_os = "linux")]
-    async fn keystroke(&self, terminal: bool, token: Option<String>) -> (Pasted, Option<String>) {
+    async fn keystroke(
+        &self,
+        terminal: bool,
+        class: &str,
+        terminals: &[String],
+        token: Option<String>,
+    ) -> (Pasted, Option<String>) {
         // xdg-desktop-portal-hyprland implements GlobalShortcuts and not RemoteDesktop, so the
-        // portal cannot type. wtype (virtual keyboard) then ydotool.
+        // portal cannot type. The shortcut is Hyprland's, not wtype's: wtype reports success
+        // even when a GTK 3 field ignores Ctrl+V.
         if tyst_platform::hyprland::is_hyprland() {
-            return keystroke_hyprland(terminal, token);
+            return keystroke_hyprland(self, class, terminals, token).await;
         }
         use tyst_platform::DesktopError;
         let mut kb = self.keyboard.lock().await;
@@ -404,7 +415,13 @@ impl Desktop {
     }
 
     #[cfg(target_os = "macos")]
-    async fn keystroke(&self, _terminal: bool, token: Option<String>) -> (Pasted, Option<String>) {
+    async fn keystroke(
+        &self,
+        _terminal: bool,
+        _class: &str,
+        _terminals: &[String],
+        token: Option<String>,
+    ) -> (Pasted, Option<String>) {
         // Asks macOS to show its Accessibility dialog when the answer is no.
         if !tyst_platform::macos_input::trusted(true) {
             log::warn!("paste: no Accessibility permission");
@@ -420,18 +437,25 @@ impl Desktop {
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    async fn keystroke(&self, _terminal: bool, token: Option<String>) -> (bool, Option<String>) {
+    async fn keystroke(
+        &self,
+        _terminal: bool,
+        _class: &str,
+        _terminals: &[String],
+        token: Option<String>,
+    ) -> (bool, Option<String>) {
         (false, token)
     }
 
     /// Asks for keyboard access now (the KDE consent dialog), for onboarding and settings.
-    /// Returns the restore token to keep. Hyprland has no such dialog; paste uses wtype.
+    /// Returns the restore token to keep. Hyprland has no such dialog; paste uses its shortcut.
     pub async fn setup_keyboard(&self, token: Option<String>) -> Result<Option<String>, String> {
         #[cfg(target_os = "linux")]
         {
             if tyst_platform::hyprland::is_hyprland() {
                 return Err(
-                    "Hyprland has no remote-desktop portal. Paste uses wtype (ydotool if wtype is missing).".into()
+                    "Hyprland has no remote-desktop portal. Paste asks Hyprland to press Ctrl+V (Ctrl+Shift+V in a terminal)."
+                        .into(),
                 );
             }
             let mut kb = self.keyboard.lock().await;
@@ -447,20 +471,47 @@ impl Desktop {
     }
 }
 
-/// Hyprland paste: `wtype` (Ctrl+V, Ctrl+Shift+V in a terminal), then `ydotool`.
+/// Chord for a focused window. `class` is the `class` field of `hyprctl activewindow -j`.
+///
+/// Omarchy's universal paste (`default/hypr/bindings/clipboard.lua`) reads a `terminal` tag
+/// set by `default/hypr/apps/terminals.lua`. That tag exists only where Omarchy's rules are
+/// loaded. Tyst matches this class against the terminal class list instead, so paste works
+/// on Hyprland without Omarchy.
 #[cfg(target_os = "linux")]
-fn keystroke_hyprland(terminal: bool, token: Option<String>) -> (Pasted, Option<String>) {
-    match tyst_platform::portal::wtype_paste(terminal) {
-        Ok(()) => return (Pasted::Typed, token),
-        Err(e) => log::warn!("paste through wtype: {e}"),
-    }
-    match tyst_platform::portal::ydotool_paste(terminal) {
-        Ok(()) => (Pasted::Typed, token),
+pub fn hyprland_paste_chord(class: &str, terminals: &[String]) -> tyst_platform::hyprland::PasteChord {
+    tyst_platform::hyprland::PasteChord::for_terminal(crate::config::is_terminal(class, terminals))
+}
+
+/// `Ok` means the shortcut was sent. `Err` leaves the dictated text on the clipboard:
+/// [`Desktop::paste`] does not put the previous clipboard back, and the pill shows the notice
+/// that the text was copied.
+#[cfg(target_os = "linux")]
+fn pasted_from_hyprland_dispatch(sent: Result<(), tyst_platform::DesktopError>) -> Pasted {
+    match sent {
+        Ok(()) => Pasted::Typed,
         Err(e) => {
-            log::warn!("paste through ydotool: {e}");
-            (Pasted::ClipboardOnly, token)
+            log::warn!("paste through Hyprland send_key_state: {e}");
+            Pasted::ClipboardOnly
         }
     }
+}
+
+/// Hyprland paste: `sendkeystate` / `hl.dsp.send_key_state`, split into key-down and key-up.
+/// A failed dispatch leaves the text on the clipboard. `wtype` is not tried: its exit status
+/// stays 0 when GTK 3 ignores the shortcut, so a fallback that waits for it to fail never runs.
+#[cfg(target_os = "linux")]
+async fn keystroke_hyprland(
+    desktop: &Desktop,
+    class: &str,
+    terminals: &[String],
+    token: Option<String>,
+) -> (Pasted, Option<String>) {
+    let chord = hyprland_paste_chord(class, terminals);
+    let Some(hypr) = desktop.hyprland().await else {
+        log::warn!("paste: Hyprland IPC unavailable; the text stays on the clipboard");
+        return (Pasted::ClipboardOnly, token);
+    };
+    (pasted_from_hyprland_dispatch(hypr.send_paste_chord(chord).await), token)
 }
 
 async fn tokio_sleep(d: Duration) {
@@ -475,5 +526,54 @@ mod tests {
     fn terminal_paste_is_one_line() {
         assert_eq!(single_line("git status"), "git status");
         assert_eq!(single_line("rm -rf build\nmake\r\n\n  ls\u{2028}x"), "rm -rf build make ls x");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn hyprland_shortcut_follows_the_focused_window_class() {
+        use tyst_platform::hyprland::{KeyPhase, PasteChord, parse_active_window, paste_key_state_commands};
+
+        let list: Vec<String> = crate::config::DEFAULT_TERMINALS.iter().map(|s| s.to_string()).collect();
+        // `class` from `hyprctl activewindow -j`. A terminal gets Ctrl+Shift+V; a GTK field does not.
+        let foot =
+            parse_active_window(r#"{"address":"0xabc","class":"foot","title":"user@host","at":[0,0],"size":[1,1]}"#)
+                .unwrap()
+                .unwrap();
+        assert_eq!(hyprland_paste_chord(&foot.class, &list), PasteChord::CtrlShiftV);
+        assert!(!format!("{foot:?}").contains("user@host"));
+        let gtk = parse_active_window(
+            r#"{"address":"0xdef","class":"org.gnome.TextEditor","title":"notes","at":[0,0],"size":[1,1]}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(hyprland_paste_chord(&gtk.class, &list), PasteChord::CtrlV);
+        assert_eq!(hyprland_paste_chord("kitty", &list), PasteChord::CtrlShiftV);
+        // Omarchy's own terminals are not `foot` or `kitty`. Ctrl+V there inserts a literal ^V.
+        for class in ["org.omarchy.terminal", "org.omarchy.bash", "org.omarchy.btop", "TUI.float"] {
+            assert_eq!(hyprland_paste_chord(class, &list), PasteChord::CtrlShiftV, "{class}");
+        }
+        assert_eq!(hyprland_paste_chord("", &list), PasteChord::CtrlV);
+        assert_eq!(hyprland_paste_chord("gtk3-demo", &list), PasteChord::CtrlV);
+
+        let (classic, lua) = paste_key_state_commands(PasteChord::CtrlV, KeyPhase::Down);
+        assert_eq!(classic, "sendkeystate CTRL, V, down,");
+        assert!(lua.contains("mods = 'CTRL'") && !lua.contains("SHIFT"));
+        let (classic, lua) = paste_key_state_commands(PasteChord::CtrlShiftV, KeyPhase::Down);
+        assert_eq!(classic, "sendkeystate CTRL SHIFT, V, down,");
+        assert!(lua.contains("mods = 'CTRL SHIFT'"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_hyprland_dispatch_leaves_the_text_on_the_clipboard() {
+        use tyst_platform::DesktopError;
+        // Typed is the only outcome that restores the previous clipboard. ClipboardOnly is
+        // what the pill turns into the "Copied. Press Ctrl+V to paste." notice.
+        assert_eq!(pasted_from_hyprland_dispatch(Ok(())), Pasted::Typed);
+        let failed =
+            pasted_from_hyprland_dispatch(Err(DesktopError::Hyprland("dispatch failed: sendkeystate: no kb".into())));
+        assert_eq!(failed, Pasted::ClipboardOnly);
+        let unavailable = pasted_from_hyprland_dispatch(Err(DesktopError::Hyprland("no socket at /run".into())));
+        assert_eq!(unavailable, Pasted::ClipboardOnly);
     }
 }

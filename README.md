@@ -140,8 +140,11 @@ Reload Hyprland and restart Tyst so the windows map under the rules. Rules match
 keyboard. The "Name this meeting" field can still be focused. The pill is placed at the
 bottom centre of the focused monitor.
 
-Paste uses `wtype` (Ctrl+V, Ctrl+Shift+V in a terminal), which Omarchy ships. `ydotool` is the
-fallback. The previous clipboard text is restored the same way as on KDE. Shortcuts use the
+Paste asks Hyprland to press Ctrl+V (Ctrl+Shift+V in a terminal), the same split as Omarchy's
+universal paste: key down, then key up, so the modifier is not left stuck. `wtype` is not used
+there. Its Ctrl+V exits 0 and inserts nothing into GTK 3 fields. If Hyprland does not accept the
+shortcut, the text stays on the clipboard and the pill says so. The previous clipboard text is
+restored the same way as on KDE when the shortcut was sent. Shortcuts use the
 GlobalShortcuts portal. If that does not bind a key, a classic config uses:
 
 ```

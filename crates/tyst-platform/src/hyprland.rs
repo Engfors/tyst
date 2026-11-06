@@ -196,6 +196,32 @@ impl Hyprland {
         Ok(true)
     }
 
+    /// Sends the paste chord to the focused surface: key down, then key up [`PASTE_KEY_GAP`]
+    /// later.
+    ///
+    /// This follows Omarchy's universal paste (SUPER+V) in
+    /// `default/hypr/bindings/clipboard.lua` (https://github.com/basecamp/omarchy).
+    /// `universal_clipboard_shortcut` sends CTRL+V, or CTRL+SHIFT+V when the focused window is
+    /// a terminal, via `send_shortcut_once`: `hl.dsp.send_key_state` with `state = "down"`, then
+    /// the same call with `state = "up"` 50 ms later. The split is what keeps Hyprland from
+    /// leaving the synthetic modifier stuck (https://github.com/hyprwm/Hyprland/discussions/14099).
+    /// Omarchy treats a window as a terminal when it has the `terminal` tag from
+    /// `default/hypr/apps/terminals.lua`. Tyst does not require Omarchy, so the caller chooses
+    /// the chord from the focused window's `class` (`hyprctl activewindow -j`) instead of that
+    /// tag. The commands go out on this socket, which is the same channel `hyprctl dispatch` uses.
+    /// Classic configs get `sendkeystate` (Hyprland's `sendshortcut` with an explicit key state);
+    /// a Lua config gets `hl.dsp.send_key_state`.
+    pub async fn send_paste_chord(&self, chord: PasteChord) -> Result<(), DesktopError> {
+        self.dispatch_paste_phase(chord, KeyPhase::Down).await?;
+        tokio::time::sleep(PASTE_KEY_GAP).await;
+        self.dispatch_paste_phase(chord, KeyPhase::Up).await
+    }
+
+    async fn dispatch_paste_phase(&self, chord: PasteChord, phase: KeyPhase) -> Result<(), DesktopError> {
+        let (classic, lua) = paste_key_state_commands(chord, phase);
+        self.dispatch_either(&classic, &lua).await
+    }
+
     /// Asks Hyprland to reread its config. Runs the socket on this thread; call it from a
     /// worker, not the UI thread or an async worker.
     pub fn reload_blocking(&self) -> Result<(), DesktopError> {
@@ -429,6 +455,65 @@ pub fn move_commands(address: &str, x: i32, y: i32) -> Option<(String, String)> 
     ))
 }
 
+/// How long the paste key stays down. Omarchy's `send_shortcut_once` waits this long
+/// (`hl.timer` timeout 50) before the key-up.
+pub const PASTE_KEY_GAP: Duration = Duration::from_millis(50);
+
+/// Ctrl+V, or Ctrl+Shift+V in a terminal. The modifier strings are the ones Omarchy's
+/// universal paste passes as `mods`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasteChord {
+    /// `CTRL` + `V`.
+    CtrlV,
+    /// `CTRL SHIFT` + `V`.
+    CtrlShiftV,
+}
+
+impl PasteChord {
+    pub fn for_terminal(terminal: bool) -> Self {
+        if terminal { Self::CtrlShiftV } else { Self::CtrlV }
+    }
+
+    fn mods(self) -> &'static str {
+        match self {
+            Self::CtrlV => "CTRL",
+            Self::CtrlShiftV => "CTRL SHIFT",
+        }
+    }
+}
+
+/// One half of the paste chord. A single `sendshortcut` can leave the modifier held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyPhase {
+    Down,
+    Up,
+}
+
+impl KeyPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Down => "down",
+            Self::Up => "up",
+        }
+    }
+}
+
+/// Classic `sendkeystate` and Lua `hl.dsp.send_key_state` for one phase of `chord`.
+///
+/// The window target is empty: the trailing comma in the classic form, and no `window` field
+/// in the Lua form. Hyprland then delivers the key to the focused surface (a normal window or
+/// a focused layer-shell surface). Omarchy's `send_shortcut_once` omits the window for that
+/// reason. A chord aimed at a window that is not focused returns ok and inserts nothing, so
+/// the caller focuses the target first. The key is the letter V; the dictated text is already
+/// on the clipboard and is not part of the dispatcher string.
+pub fn paste_key_state_commands(chord: PasteChord, phase: KeyPhase) -> (String, String) {
+    let mods = chord.mods();
+    let state = phase.as_str();
+    let classic = format!("sendkeystate {mods}, V, {state},");
+    let lua = format!("hl.dsp.send_key_state({{ mods = '{mods}', key = 'V', state = '{state}' }})");
+    (classic, lua)
+}
+
 /// Classic `setfloating`, and `hl.dsp.window.float` with `action = 'set'`.
 pub fn float_commands(address: &str) -> Option<(String, String)> {
     if !is_window_address(address) {
@@ -620,6 +705,83 @@ mod tests {
         assert_eq!(own_window(body, "Tyst Dictation", 9).unwrap().unwrap().id, "0x11");
         assert!(own_window(body, "Tyst Dictation", 7).unwrap().is_none());
         assert!(own_window(body, "missing", 42).unwrap().is_none());
+    }
+
+    #[test]
+    fn paste_chord_is_ctrl_v_or_ctrl_shift_v_and_split_into_down_and_up() {
+        assert_eq!(PasteChord::for_terminal(false), PasteChord::CtrlV);
+        assert_eq!(PasteChord::for_terminal(true), PasteChord::CtrlShiftV);
+        let (classic, lua) = paste_key_state_commands(PasteChord::CtrlV, KeyPhase::Down);
+        assert_eq!(classic, "sendkeystate CTRL, V, down,");
+        assert_eq!(lua, "hl.dsp.send_key_state({ mods = 'CTRL', key = 'V', state = 'down' })");
+        let (classic, lua) = paste_key_state_commands(PasteChord::CtrlV, KeyPhase::Up);
+        assert_eq!(classic, "sendkeystate CTRL, V, up,");
+        assert_eq!(lua, "hl.dsp.send_key_state({ mods = 'CTRL', key = 'V', state = 'up' })");
+        let (classic, lua) = paste_key_state_commands(PasteChord::CtrlShiftV, KeyPhase::Down);
+        assert_eq!(classic, "sendkeystate CTRL SHIFT, V, down,");
+        assert_eq!(lua, "hl.dsp.send_key_state({ mods = 'CTRL SHIFT', key = 'V', state = 'down' })");
+        let (classic, lua) = paste_key_state_commands(PasteChord::CtrlShiftV, KeyPhase::Up);
+        assert_eq!(classic, "sendkeystate CTRL SHIFT, V, up,");
+        assert_eq!(lua, "hl.dsp.send_key_state({ mods = 'CTRL SHIFT', key = 'V', state = 'up' })");
+        // The empty window (trailing comma, no Lua `window`) is load-bearing: dropping it makes
+        // classic `sendkeystate` reject the call, and naming a window sends the key somewhere
+        // that is not the focused surface.
+        assert!(classic.ends_with("up,"));
+        assert!(!lua.contains("window"));
+        assert!(!classic.contains('\n') && !lua.contains('\n'));
+    }
+
+    #[tokio::test]
+    async fn send_paste_chord_presses_then_releases_on_a_lua_config() {
+        let fake = fake_socket(|_| "ok\n".into());
+        fake.hypr.send_paste_chord(PasteChord::CtrlV).await.expect("lua paste");
+        let got = fake.seen.lock().expect("requests").clone();
+        let (_, down) = paste_key_state_commands(PasteChord::CtrlV, KeyPhase::Down);
+        let (_, up) = paste_key_state_commands(PasteChord::CtrlV, KeyPhase::Up);
+        assert_eq!(
+            got,
+            vec!["dispatch hl.dsp.no_op()".to_string(), format!("dispatch {down}"), format!("dispatch {up}")]
+        );
+    }
+
+    #[tokio::test]
+    async fn send_paste_chord_uses_classic_sendkeystate_for_a_terminal() {
+        let fake =
+            fake_socket(|req| if req.contains("hl.dsp") { "Invalid dispatcher\n".into() } else { "ok\n".into() });
+        fake.hypr.send_paste_chord(PasteChord::CtrlShiftV).await.expect("classic paste");
+        let got = fake.seen.lock().expect("requests").clone();
+        let (down, _) = paste_key_state_commands(PasteChord::CtrlShiftV, KeyPhase::Down);
+        let (up, _) = paste_key_state_commands(PasteChord::CtrlShiftV, KeyPhase::Up);
+        assert_eq!(
+            got,
+            vec!["dispatch hl.dsp.no_op()".to_string(), format!("dispatch {down}"), format!("dispatch {up}")]
+        );
+        assert!(!got.iter().any(|r| r.contains("send_key_state")));
+    }
+
+    #[tokio::test]
+    async fn send_paste_chord_stops_when_the_press_fails_and_reports_a_failed_release() {
+        let down_fails =
+            fake_socket(
+                |req| {
+                    if req.contains("hl.dsp.no_op") { "ok\n".into() } else { "sendkeystate: no kb\n".into() }
+                },
+            );
+        let err = down_fails.hypr.send_paste_chord(PasteChord::CtrlV).await.expect_err("press failed");
+        assert!(err.to_string().contains("no kb"), "{err}");
+        let got = down_fails.seen.lock().expect("requests").clone();
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(got[1].contains("down"), "{got:?}");
+        assert!(!got.iter().any(|r| r.contains("up")), "{got:?}");
+
+        let up_fails = fake_socket(|req| {
+            if req.contains("state = 'up'") { "sendkeystate: key not found\n".into() } else { "ok\n".into() }
+        });
+        let err = up_fails.hypr.send_paste_chord(PasteChord::CtrlV).await.expect_err("release failed");
+        assert!(err.to_string().contains("key not found"), "{err}");
+        let got = up_fails.seen.lock().expect("requests").clone();
+        assert_eq!(got.len(), 3, "{got:?}");
+        assert!(got[2].contains("up"), "{got:?}");
     }
 
     #[test]

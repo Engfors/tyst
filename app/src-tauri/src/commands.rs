@@ -226,6 +226,9 @@ pub fn config_set(app: AppHandle, config: Config) -> CmdResult {
     config.dictation.keyboard_access = old.dictation.keyboard_access;
     config.updates.github_token = old.updates.github_token;
     config.dictation.last_lang = old.dictation.last_lang;
+    // The settings form owns the class list. This flag is the one-time migration, so a save
+    // must not clear it and append the Omarchy classes again over a removal.
+    config.dictation.omarchy_terminals_merged = old.dictation.omarchy_terminals_merged;
     let rebind = config.dictation.enabled != old.dictation.enabled
         || config.dictation.shortcut != old.dictation.shortcut
         || config.dictation.meeting_shortcut != old.dictation.meeting_shortcut;

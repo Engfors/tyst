@@ -107,6 +107,8 @@ export interface DictationSettings {
   paste_mode: PasteMode;
   restore_clipboard: boolean;
   terminal_classes: string[];
+  /** Set once saved lists have received the Omarchy terminal classes. */
+  omarchy_terminals_merged: boolean;
   language: LanguageMode;
   last_lang: Lang;
   shortcut: string;

@@ -294,6 +294,5 @@ mod tests {
         let window = hyprland::parse_active_window(body).unwrap().unwrap();
         assert_eq!(window.class, "kitty");
         assert!(!format!("{window:?}").contains("user typed"));
-        assert_eq!(tyst_platform::portal::wtype_args(false), &["-M", "ctrl", "-k", "v", "-m", "ctrl"]);
     }
 }

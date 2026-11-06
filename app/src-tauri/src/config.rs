@@ -125,14 +125,43 @@ pub struct DictationSettings {
     /// Linux: the keyboard portal's restore token is in the keychain ([`crate::secrets`]), so
     /// paste does not ask again.
     pub keyboard_access: bool,
+    /// Set after [`OMARCHY_TERMINALS`] have been merged into a list saved before they were
+    /// defaults. The merge runs once, on load. A class removed after that stays removed.
+    ///
+    /// The default function is `false`, not [`Default`] for this struct. A `[dictation]` table
+    /// written before the field existed must still look unmerged. A missing `dictation` table
+    /// uses [`Default`], which already lists the classes and sets this to true.
+    #[serde(default = "not_yet_merged")]
+    pub omarchy_terminals_merged: bool,
     /// Where versions before 0.2 kept that token. Read once to move it into the keychain
     /// (issue #8), never written back.
     #[serde(skip_serializing)]
     pub keyboard_token: Option<String>,
 }
 
-pub const DEFAULT_TERMINALS: &[&str] =
-    &["com.mitchellh.ghostty", "org.kde.konsole", "kitty", "alacritty", "foot", "wezterm"];
+fn not_yet_merged() -> bool {
+    false
+}
+
+/// Omarchy's own terminal windows. Its terminal tag matches `org.omarchy.*` and `TUI.*`.
+/// Ghostty under `org.omarchy.terminal` treats Ctrl+V as a literal ^V. A saved
+/// `terminal_classes` list from before these were defaults does not name them;
+/// [`DictationSettings::merge_omarchy_terminals`] appends the missing ones once.
+pub const OMARCHY_TERMINALS: &[&str] = &["org.omarchy.terminal", "org.omarchy.bash", "org.omarchy.btop", "TUI.float"];
+
+/// Classes that paste with Ctrl+Shift+V.
+pub const DEFAULT_TERMINALS: &[&str] = &[
+    "com.mitchellh.ghostty",
+    "org.kde.konsole",
+    "kitty",
+    "alacritty",
+    "foot",
+    "wezterm",
+    "org.omarchy.terminal",
+    "org.omarchy.bash",
+    "org.omarchy.btop",
+    "TUI.float",
+];
 
 impl Default for DictationSettings {
     fn default() -> Self {
@@ -147,8 +176,35 @@ impl Default for DictationSettings {
             shortcut: "Super+BracketLeft".into(),
             meeting_shortcut: "Super+Shift+BracketLeft".into(),
             keyboard_access: false,
+            // A new config already lists [`OMARCHY_TERMINALS`], so it does not need the merge.
+            omarchy_terminals_merged: true,
             keyboard_token: None,
         }
+    }
+}
+
+impl DictationSettings {
+    /// Appends any [`OMARCHY_TERMINALS`] entry the saved list does not already name, then
+    /// records that the merge has run. Existing entries stay in order, including classes the
+    /// user added and older defaults they removed (`foot` is not put back). Comparison trims
+    /// and ignores case, so `ORG.OMARCHY.TERMINAL` counts as `org.omarchy.terminal`.
+    ///
+    /// Returns whether the settings changed and should be saved. The first call on a file
+    /// written before the flag existed returns true even when every class was already present,
+    /// so the flag itself is stored. Later calls do nothing: a class the user deletes after
+    /// the merge stays deleted.
+    pub fn merge_omarchy_terminals(&mut self) -> bool {
+        if self.omarchy_terminals_merged {
+            return false;
+        }
+        for class in OMARCHY_TERMINALS {
+            let present = self.terminal_classes.iter().any(|have| have.trim().eq_ignore_ascii_case(class));
+            if !present {
+                self.terminal_classes.push((*class).to_string());
+            }
+        }
+        self.omarchy_terminals_merged = true;
+        true
     }
 }
 
@@ -237,8 +293,18 @@ impl Config {
     pub fn load() -> Self {
         let path = Self::path();
         match std::fs::read_to_string(&path) {
-            Ok(text) => match toml::from_str(&text) {
-                Ok(c) => c,
+            Ok(text) => match toml::from_str::<Self>(&text) {
+                Ok(mut c) => {
+                    // A list saved before the Omarchy classes existed would otherwise keep
+                    // pasting into those windows with Ctrl+V. The merge preserves every class
+                    // already stored. Saving records the flag so a later removal sticks.
+                    if c.dictation.merge_omarchy_terminals()
+                        && let Err(e) = c.save()
+                    {
+                        log::error!("saving the Omarchy terminal classes into the config: {e}");
+                    }
+                    c
+                }
                 Err(e) => {
                     log::error!("config {} unreadable ({e}), using defaults", path.display());
                     let _ = std::fs::rename(&path, path.with_extension("toml.broken"));
@@ -316,16 +382,91 @@ mod tests {
     #[test]
     fn spots_terminals() {
         let list: Vec<String> = DEFAULT_TERMINALS.iter().map(|s| s.to_string()).collect();
-        for class in
-            ["org.kde.konsole", "com.mitchellh.ghostty", "kitty", "Alacritty", "foot", "org.wezfurlong.wezterm"]
-        {
+        for class in [
+            "org.kde.konsole",
+            "com.mitchellh.ghostty",
+            "kitty",
+            "Alacritty",
+            "foot",
+            "org.wezfurlong.wezterm",
+            "org.omarchy.terminal",
+            "org.omarchy.bash",
+            "org.omarchy.btop",
+            "TUI.float",
+        ] {
             assert!(is_terminal(class, &list), "{class}");
         }
-        for class in ["org.kde.kate", "firefox", "Slack", "code", ""] {
+        for class in ["org.kde.kate", "firefox", "Slack", "code", "gtk3-demo", "org.gtk.Demo4", ""] {
             assert!(!is_terminal(class, &list), "{class}");
         }
         // A bare class matches a reverse-DNS entry too (X11 WM_CLASS "konsole").
         assert!(is_terminal("konsole", &list));
+        for class in OMARCHY_TERMINALS {
+            assert!(DEFAULT_TERMINALS.contains(class), "{class}");
+        }
+    }
+
+    #[test]
+    fn saved_terminal_lists_gain_omarchy_classes_once() {
+        let old = "\
+[dictation]
+terminal_classes = [
+  \"com.mitchellh.ghostty\",
+  \"org.kde.konsole\",
+  \"kitty\",
+  \"alacritty\",
+  \"wezterm\",
+  \"my.custom.term\",
+]
+";
+        // `foot` was removed on purpose and must not come back. The custom class stays.
+        let mut saved: Config = toml::from_str(old).unwrap();
+        assert!(!saved.dictation.omarchy_terminals_merged);
+        assert!(saved.dictation.merge_omarchy_terminals());
+        let classes = &saved.dictation.terminal_classes;
+        assert_eq!(
+            &classes[..6],
+            ["com.mitchellh.ghostty", "org.kde.konsole", "kitty", "alacritty", "wezterm", "my.custom.term",]
+        );
+        assert!(!classes.iter().any(|c| c == "foot"));
+        for class in OMARCHY_TERMINALS {
+            assert!(classes.iter().any(|c| c == class), "{class}");
+        }
+        assert!(saved.dictation.omarchy_terminals_merged);
+        // Emil's list already names the Ghostty app id. The other three are still added, once.
+        let emil = "\
+[dictation]
+terminal_classes = [\"foot\", \"org.omarchy.terminal\"]
+";
+        let mut emil: Config = toml::from_str(emil).unwrap();
+        assert!(emil.dictation.merge_omarchy_terminals());
+        assert_eq!(emil.dictation.terminal_classes.iter().filter(|c| *c == "org.omarchy.terminal").count(), 1);
+        assert!(emil.dictation.terminal_classes.iter().any(|c| c == "org.omarchy.bash"));
+        assert!(emil.dictation.terminal_classes.iter().any(|c| c == "org.omarchy.btop"));
+        assert!(emil.dictation.terminal_classes.iter().any(|c| c == "TUI.float"));
+        // A different case is the same class.
+        let mut cased: Config = toml::from_str("[dictation]\nterminal_classes = [\"ORG.OMARCHY.TERMINAL\"]\n").unwrap();
+        assert!(cased.dictation.merge_omarchy_terminals());
+        assert_eq!(
+            cased.dictation.terminal_classes.iter().filter(|c| c.eq_ignore_ascii_case("org.omarchy.terminal")).count(),
+            1
+        );
+        // After the flag is stored, deleting a class stays deleted. A fresh default needs no merge.
+        emil.dictation.terminal_classes.retain(|c| c != "org.omarchy.terminal");
+        assert!(!emil.dictation.merge_omarchy_terminals());
+        assert!(!emil.dictation.terminal_classes.iter().any(|c| c == "org.omarchy.terminal"));
+        let reloaded: Config = toml::from_str(&toml::to_string(&emil).unwrap()).unwrap();
+        assert!(reloaded.dictation.omarchy_terminals_merged);
+        assert!(!reloaded.dictation.terminal_classes.iter().any(|c| c == "org.omarchy.terminal"));
+        assert!(!reloaded.dictation.clone().merge_omarchy_terminals());
+        let fresh = Config::default();
+        assert!(fresh.dictation.omarchy_terminals_merged);
+        assert!(!fresh.dictation.clone().merge_omarchy_terminals());
+        // No `[dictation]` table at all: the struct default already has the classes.
+        let bare: Config = toml::from_str("onboarded = true\n").unwrap();
+        assert!(bare.dictation.omarchy_terminals_merged);
+        assert!(bare.dictation.terminal_classes.iter().any(|c| c == "org.omarchy.terminal"));
+        assert!(!bare.dictation.clone().merge_omarchy_terminals());
     }
 
     #[test]
