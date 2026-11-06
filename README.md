@@ -62,8 +62,11 @@ PipeWire. `tyst-cli meeting --mic --system` runs the same session without the UI
   speakers, your microphone hears them too. Tyst removes that echo from the Me channel with WebRTC's
   AEC3, using the system audio as the reference, so their words are not written twice. Headphones
   still give the cleanest Me channel.
-- **Dictation**: hold or tap the dictation shortcut (`Super+Å` on macOS, set in System Settings ›
-  Shortcuts on Linux), speak, and the text is pasted where you were typing.
+- **Dictation**: hold or tap the dictation shortcut (Cmd+Å on macOS; Ctrl+Å on Linux by default),
+  speak, and the text is pasted where you were typing. The meeting shortcut defaults to
+  Cmd+Shift+Å on macOS and Ctrl+Shift+Å on Linux. KDE lists the keys under System Settings ›
+  Keyboard › Shortcuts › Tyst. That path is KDE's; Hyprland asks in the GlobalShortcuts dialog,
+  and the Omarchy section below is the fallback when that dialog does not bind a key.
 - **Meeting detection** (off by default, Settings › Meetings): when Teams, Zoom, a browser or
   another app from your list starts using the microphone, Tyst asks whether to transcribe. It never
   starts on its own.

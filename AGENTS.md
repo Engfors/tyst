@@ -20,11 +20,16 @@ decisions are in [docs/decisions/](docs/decisions/).
 ```
 crates/tyst-core      pipeline: resample -> Silero VAD -> segmenter -> router -> TDT engine -> vocabulary
                       -> transcript -> Markdown writer / journal. Pure Rust + ONNX Runtime, no network, no OS APIs.
-crates/tyst-platform  OS integrations behind traits: microphone via cpal (`mic`), PipeWire mic + sink monitor
-                      (`pipewire`, Linux), Core Audio process tap (`macos-tap`, macOS 14.4+).
+crates/tyst-platform  OS integrations behind traits: microphone via cpal (`mic`); PipeWire mic + sink monitor
+                      (`pipewire`, Linux); Core Audio process tap (`macos-tap`, macOS 14.4+). Desktop
+                      feature: clipboard, Linux XDG portals (global shortcuts and KDE paste), KWin
+                      scripting, Hyprland IPC (rules, pill placement, `send_key_state` paste), and
+                      macOS app activation plus the paste keystroke.
 crates/tyst-runtime   shared by app and CLI: engine loading, model fetch, two-channel `Meeting` session.
-crates/tyst-cli       headless CLI: transcribe, live, meeting, bench, models, recover.
-app/src-tauri         Tauri v2 app (binary `tyst`): tray, meeting window, settings, onboarding, KWin rule.
+crates/tyst-cli       headless CLI: transcribe, live, dictate, meeting, bench, models, recover,
+                      echo-cancel, check-update.
+app/src-tauri         Tauri v2 app (binary `tyst`): tray, meeting window, settings, onboarding,
+                      KWin rules and Hyprland window-rule files.
 app/ui                Svelte 5 + Vite frontend, one page per window.
 models/models.toml    pinned model manifest (Hugging Face repo + revision + SHA-256 per file, plus files
                       `models fetch` derives locally, e.g. the banded encoder from `encoder_rewrite`).
@@ -42,6 +47,7 @@ cargo build --release -p tyst-cli
 ./target/release/tyst-cli transcribe clip.wav
 ./target/release/tyst-cli live --mic                      # Enter stops; prints latency and CPU stats
 ./target/release/tyst-cli live --simulate clip.wav        # same, with a file played in real time
+./target/release/tyst-cli dictate --mic                   # Enter starts and stops; prints stop-to-text latency
 ./target/release/tyst-cli meeting --mic --system          # two-channel meeting, no UI, echo cancelled
 ./target/release/tyst-cli echo-cancel --mic me.wav --system others.wav --out clean.wav   # offline AEC
 ./target/release/tyst-cli check-update                    # GitHub latest release

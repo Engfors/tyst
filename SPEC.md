@@ -1,7 +1,7 @@
 # SPEC — Tyst: local meeting transcription & dictation
 
 > **Working name:** `Tyst` (Swedish for "quiet" — nothing leaves the device). Final name TBD — rename with a project-wide find/replace (`Tyst` / `tyst`).
-> **Status:** Draft v1 — 2026-10-02
+> **Status:** Working specification — phases 0–5 accepted. Last updated 2026-11-06.
 > **Owner:** Emil Engfors
 > **Audience:** Coding agents (implementation) and the owner (review).
 
@@ -236,12 +236,12 @@ struct Segment {
 ```markdown
 ---
 title: Customer sync – Acme
-date: 2026-10-02
+date: 2026-11-06
 start: "10:15"
 end: "10:52"
 duration: 37m
 languages: [sv, en]
-app: Tyst 0.1.0
+app: Tyst 0.2.0
 models: [pianissimo-sv-int8@<rev>, parakeet-tdt-0.6b-v3-int8@<rev>]
 ---
 
@@ -270,7 +270,7 @@ models: [pianissimo-sv-int8@<rev>, parakeet-tdt-0.6b-v3-int8@<rev>]
 - Motion is subtle (≤ 150 ms), respects "reduce motion".
 
 ### 8.2 Presence
-- **Menu bar icon (macOS) / system tray icon (KDE).** No Dock icon / no taskbar entry.
+- **Menu bar icon (macOS) / StatusNotifierItem tray (Linux).** KDE hosts that icon in the system tray; on Omarchy the host is quickshell. No Dock icon / no taskbar entry.
 - Icon states: idle · meeting recording (red dot) · dictating (pulse) · paused · error.
 - Tray menu: Start/Stop meeting transcription · Pause/Resume · Show/Hide meeting window · Language: Auto/Svenska/English · Open transcripts folder · Settings… · Check for updates · About · Quit.
 - **Launch at login: on by default**, configurable.
@@ -323,15 +323,13 @@ models: [pianissimo-sv-int8@<rev>, parakeet-tdt-0.6b-v3-int8@<rev>]
 1. Welcome + what the app does + "everything stays on this computer".
 2. Choose **transcripts folder**.
 3. **Download models** (shows sizes; or "Use local folder").
-4. **Permissions** with guided steps and live status checks:
-   - macOS: Microphone · System audio recording (Screen & System Audio Recording / audio capture) · Accessibility (for paste).
-   - Linux: Microphone (PipeWire, usually no prompt) · Global shortcuts portal · Remote Desktop/input portal for paste (one-time KDE consent, persisted).
-5. **Shortcuts** (dictation, meeting) with conflict check.
+4. **Audio access** with live checks. macOS asks for Microphone (and system-audio capture where used). Linux uses PipeWire and usually shows no prompt. On Omarchy, this step also tells the user to `dofile` `hyprland.lua` (a classic config `source`s `hyprland.conf` instead). On KDE, Tyst installs the window rule itself.
+5. **Dictation**: the shortcut and paste access. There is no separate Shortcuts step. macOS defaults to Cmd+Å (meeting: Cmd+Shift+Å). Linux asks the GlobalShortcuts portal for Ctrl+Å and Ctrl+Shift+Å. KDE changes those keys under System Settings › Keyboard › Shortcuts › Tyst. Hyprland uses the portal dialog; if it does not bind a key, the fallback is `o.bind(...)` in `~/.config/hypr/bindings.lua` (a classic config uses `bind =` in `hyprland.conf`). Paste on KDE is the RemoteDesktop portal (one-time consent). Paste on Hyprland is `send_key_state` and has no remote-desktop dialog. macOS paste needs Accessibility.
 6. Preferences: launch at login (on), auto-detect meetings (off), dictation paste mode (preview), headphones tip.
 7. Test: "Say something" → shows transcript in the pill.
 
 ### 8.6 Settings (single compact window, tabs)
-General (launch at login, transcripts folder, speaker labels, language default) · Shortcuts · Dictation (mode, paste behavior, clipboard restore, terminal class list) · Meetings (auto-detect, app list, window behavior) · Vocabulary · Models · Updates · About (version, licenses, attributions).
+General (launch at login, transcripts folder, speaker labels, language default) · Dictation (shortcut, mode, paste behavior, clipboard restore, terminal class list) · Meetings (auto-detect, app list, window behavior) · Vocabulary · Models · Updates · About (version, licenses, attributions). There is no Shortcuts tab; the shortcut lives on Dictation.
 
 ---
 
@@ -362,7 +360,7 @@ General (launch at login, transcripts folder, speaker labels, language default) 
 ### 9.7 Update notification
 - On launch and every 24 h: query the latest GitHub Release of the repo; compare semver.
 - If newer: tray badge + Settings › Updates shows version, release notes, and a "Download" button (opens the release page). **No auto-install in v1.**
-- While the repo is **private**, the check requires a token: support an optional GitHub token in Settings › Updates (stored in macOS Keychain / KDE Wallet via the `keyring` crate); without a token the check is disabled and says so. Once public, no token needed.
+- The check is anonymous. There is no GitHub token field. A token saved by 0.1.0 is deleted from the OS keychain on first start and is not sent.
 - Can be turned off.
 
 ---
@@ -379,8 +377,11 @@ General (launch at login, transcripts folder, speaker labels, language default) 
 - **Work-Mac caveat:** the Mac may be MDM-managed. If unsigned apps or the required permissions are blocked, fall back to running the locally built app and document what was blocked.
 
 ### 10.2 Arch Linux — KDE Plasma 6, Wayland
+
+This section is the KDE path. PipeWire, the AppImage and the NVIDIA workaround also apply on Hyprland (§10.3). The System Settings › Keyboard › Shortcuts › Tyst path below is KDE's, not every Linux desktop's.
+
 - **Audio:** PipeWire via `pipewire-rs`. Others = monitor of the default sink (follows default sink changes). Me = default source.
-- **Global shortcuts:** Tauri's global-shortcut plugin does **not** work on Wayland → use the **XDG Desktop Portal GlobalShortcuts** interface (`ashpd` crate); KDE implements it and lets the user bind/confirm in System Settings.
+- **Global shortcuts:** Tauri's global-shortcut plugin does **not** work on Wayland → use the **XDG Desktop Portal GlobalShortcuts** interface (`ashpd` crate). KDE Plasma 6 implements it and lists the keys under System Settings › Keyboard › Shortcuts › Tyst. Hyprland's portal implements it too (§10.3). GNOME 48 or newer does as well.
 - **Paste / key injection:** **XDG Desktop Portal RemoteDesktop** (keyboard) via `ashpd` (one-time KDE consent; request persistence). Fallback: `ydotool` (requires `ydotoold` + uinput permissions) — document as manual fallback. Note: avoid typing text character-by-character (unreliable for å/ä/ö); always paste via clipboard.
 - **Clipboard:** Wayland data-control (`wl-clipboard-rs` or `arboard` with the Wayland data-control feature) so clipboard can be set/restored without focus.
 - **Active-window detection (for terminal paste mode):** KWin D-Bus / small KWin script reporting the active window's resource class.
@@ -396,9 +397,15 @@ General (launch at login, transcripts folder, speaker labels, language default) 
 ### 10.3 Omarchy — Hyprland
 
 Same audio path as §10.2 (PipeWire). The compositor integration is Hyprland's IPC socket instead
-of KWin, and window rules in the syntax Hyprland 0.53 introduced (Omarchy's config uses that
-syntax). Tyst writes `$XDG_CONFIG_HOME/tyst/hyprland.conf` (default `~/.config/tyst/hyprland.conf`)
-and does not edit the user's Hyprland config; the user adds `source = <that file>`.
+of KWin. Tyst writes two rule files and does not edit the user's Hyprland config. `source =` is
+invalid in a Lua-only config, so the two configs are not interchangeable:
+
+- **Lua (Hyprland 0.56, current Omarchy):** `$XDG_CONFIG_HOME/tyst/hyprland.lua` calls upstream
+  `hl.window_rule` (not Omarchy's `o.window`). In `~/.config/hypr/hyprland.lua`, after
+  `require("default.hypr.omarchy")`, the user adds `dofile(<that file>)`.
+- **Classic (Hyprland 0.53+):** `$XDG_CONFIG_HOME/tyst/hyprland.conf` (default
+  `~/.config/tyst/hyprland.conf`) uses `windowrule` with `match:title`. The user adds
+  `source = <that file>`.
 
 - **Rules:** float, pin (above other windows, every workspace), `no_initial_focus` (a newly shown
   window does not take the keyboard; the name field can still be focused), `border_size = 0`.
@@ -420,8 +427,18 @@ and does not edit the user's Hyprland config; the user adds `source = <that file
   Clipboard save-and-restore after a sent shortcut is unchanged. `wtype` is not used: it exits
   0 when a GTK 3 field ignores Ctrl+V.
 - **Shortcuts and tray:** the existing GlobalShortcuts portal and the StatusNotifierItem tray.
-  On Omarchy the tray host is quickshell. If the portal does not name a key, a Hyprland `bind`
-  or Omarchy `o.bind` for `tyst --dictate` and `tyst --toggle-meeting`.
+  On Omarchy the tray host is quickshell. The portal's preferred keys are Ctrl+Å (`CTRL+aring`)
+  and Ctrl+Shift+Å. If it does not bind a key, Omarchy's Lua config adds this to
+  `~/.config/hypr/bindings.lua` (`o.bind` runs the command through `hl.dsp.exec_cmd`):
+
+  ```lua
+  o.bind("CTRL + aring", "Dictate", "tyst --dictate")
+  o.bind("CTRL + SHIFT + aring", "Meeting", "tyst --toggle-meeting")
+  ```
+
+  A classic config cannot call `o.bind`. It uses `bind = CTRL, aring, exec, tyst --dictate` and
+  `bind = CTRL SHIFT, aring, exec, tyst --toggle-meeting` in `hyprland.conf`. Use the real path
+  to the binary when `tyst` is not on `PATH`.
 - **AppImage:** needs FUSE 3 (`pacman -S fuse3`), same as §10.2's `fusermount3` requirement.
 
 ---
@@ -431,7 +448,7 @@ and does not edit the user's Hyprland config; the user adds `source = <that file
 - **Privacy:** no audio or text leaves the device; no telemetry/analytics/crash reporting services. Only network: model download + update check, both visible and disableable.
 - **Performance:** see §6.2 targets. Idle (not recording): ~0 % CPU, models may be unloaded after idle timeout.
 - **Reliability:** meeting recordings of 3 h must work without memory growth (bounded buffers, streaming journal). Crash recovery per §6.6. Audio device changes (headset plugged/unplugged, default device switch) handled without stopping the session.
-- **Security:** config in `~/Library/Application Support/Tyst/` / `~/.config/tyst/`; secrets (GitHub token) in OS keychain only.
+- **Security:** config in `~/Library/Application Support/Tyst/` / `~/.config/tyst/`. The Linux paste restore token is kept in the OS keychain (Secret Service, or the macOS login keychain). The update check does not store a GitHub token.
 - **Accessibility:** keyboard navigation in all UI; sufficient contrast; respects reduced motion.
 - **Testability:** core is pure and tested with recorded fixtures (WAV → expected segments); `tyst-cli` exposes the pipeline headlessly.
 

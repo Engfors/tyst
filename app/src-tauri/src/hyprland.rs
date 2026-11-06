@@ -21,10 +21,12 @@ use crate::windows::{MEETING_TITLE, PILL_TITLE};
 /// Hyprland release whose window-rule syntax this file is written for, and every release after it.
 pub const RULES_SINCE: &str = "0.53";
 
-/// Binds to add when the GlobalShortcuts portal does not bind a key. `aring` is the Å keysym.
+/// Binds to add when the GlobalShortcuts portal does not bind a key. Omarchy's Lua config
+/// loads `o.bind` from `~/.config/hypr/bindings.lua` (`aring` is the Å keysym). A classic
+/// Hyprland config cannot call `o.bind`; it uses `bind =` in `hyprland.conf` instead.
 pub const BIND_HINT: &str = "\
-bind = CTRL, aring, exec, tyst --dictate
-bind = CTRL SHIFT, aring, exec, tyst --toggle-meeting";
+o.bind(\"CTRL + aring\", \"Dictate\", \"tyst --dictate\")
+o.bind(\"CTRL + SHIFT + aring\", \"Meeting\", \"tyst --toggle-meeting\")";
 
 pub fn rules_path() -> PathBuf {
     crate::config::config_dir().join("hyprland.conf")
@@ -237,8 +239,9 @@ mod tests {
         assert!(effects.contains("border_size = 0"));
         assert!(!effects.lines().any(|l| l.trim_start().starts_with("no_focus")));
         assert_eq!(re2_exact("a.b"), r"^(a\.b)$");
-        assert!(BIND_HINT.contains("tyst --dictate"));
-        assert!(BIND_HINT.contains("tyst --toggle-meeting"));
+        assert!(BIND_HINT.contains("o.bind(\"CTRL + aring\", \"Dictate\", \"tyst --dictate\")"));
+        assert!(BIND_HINT.contains("o.bind(\"CTRL + SHIFT + aring\", \"Meeting\", \"tyst --toggle-meeting\")"));
+        assert!(!BIND_HINT.contains("bind ="));
         let lua_path = Path::new("/home/me/.config/tyst/hyprland.lua");
         let lua = lua_rules_document(lua_path);
         assert!(lua.contains("hl.window_rule({"));

@@ -25,20 +25,36 @@ No layer-shell spike.
 - It works with Tauri's normal GTK windows, so the meeting window keeps native dragging and
   resizing, and clicking into the name-on-stop field still focuses it (layer-shell surfaces need
   keyboard interactivity set up front and cannot be moved by dragging).
-- It is KDE-only. Other Wayland desktops get ordinary windows: the meeting window may take focus
+- Desktops other than KDE and Hyprland get ordinary windows: the meeting window may take focus
   when shown and its position is up to the compositor; dictation still works, but focus return
-  before the paste is left to the compositor.
+  before the paste is left to the compositor. Hyprland is the same option 1, below, not a
+  layer-shell spike.
 - The rules live in the user's `kwinrulesrc` under fixed group names, so reinstalling replaces
   them; they stay behind if Tyst is removed (Settings › Meetings can reinstall them, and KDE's
   Window Rules settings can delete them).
 
 ### Update (2026-10-31) — Hyprland, same choice
 
-Omarchy (Hyprland) gets the same option 1, not layer-shell: a rules file Tyst writes and the user
-`source`s (Tyst does not edit `hyprland.conf`), plus Hyprland IPC for what rules cannot express
-(pill placement, focus return, meeting-window position). The rule syntax is Hyprland 0.53's.
-`no_initial_focus` is used instead of `no_focus`, so showing a window does not take the keyboard
-and the name field can still be typed into. KDE behavior above is unchanged.
+Omarchy (Hyprland) gets the same option 1, not layer-shell: Tyst writes the rules and does not
+edit the user's Hyprland config. Hyprland IPC does what rules cannot express (pill placement,
+focus return, meeting-window position). `no_initial_focus` is used instead of `no_focus`, so
+showing a window does not take the keyboard and the name field can still be typed into. KDE
+behavior above is unchanged.
+
+### Update (2026-11-06) — Lua configs do not `source` the classic file
+
+The 2026-10-31 note described only the classic file. Current Omarchy is Hyprland 0.56 with a
+Lua-only config, where `source =` is invalid. Tyst writes both files:
+
+- `hyprland.lua` calls upstream `hl.window_rule` (float, pin, `no_initial_focus`, no border).
+  It does not call Omarchy's `o.window`, so the file loads without `o`. The user adds
+  `dofile(<that file>)` in `~/.config/hypr/hyprland.lua` after `require("default.hypr.omarchy")`.
+- `hyprland.conf` is the Hyprland 0.53 `windowrule` form for a classic config. The user adds
+  `source = <that file>`.
+
+Shortcut fallback is separate from window rules. When the GlobalShortcuts portal does not bind a
+key, Omarchy adds `o.bind(...)` in `~/.config/hypr/bindings.lua`. A classic config uses `bind =`
+in `hyprland.conf`. Paste on Hyprland is `send_key_state` (key down, then key up), not `wtype`.
 
 ## Evidence
 
