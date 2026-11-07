@@ -241,7 +241,7 @@ start: "10:15"
 end: "10:52"
 duration: 37m
 languages: [sv, en]
-app: Tyst 0.2.0
+app: Tyst 0.2.1
 models: [pianissimo-sv-int8@<rev>, parakeet-tdt-0.6b-v3-int8@<rev>]
 ---
 
