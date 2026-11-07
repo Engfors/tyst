@@ -5,20 +5,41 @@ for a version is the text of its GitHub release and of the update notice in Sett
 
 ## Unreleased
 
+## 0.2.1 - 2026-11-07
+
+Fixes since 0.2.0. The 0.2.0 notes below are unchanged.
+
+Security
+- The lockfile no longer uses the yanked async-executor 1.14.0 (a use-after-free in
+  `Executor::drop`). zbus accepts 1.14.1, which is what is pinned now.
+
 Fixes
 - Hyprland paste no longer uses `wtype`. That shortcut exits 0 and inserts nothing into GTK 3
   fields. Tyst asks Hyprland to press Ctrl+V (Ctrl+Shift+V in a terminal) as a key-down and a
-  key-up. If the dispatch fails, the text stays on the clipboard and the pill says so. The
-  default terminal list includes Omarchy's `org.omarchy.terminal`, `org.omarchy.bash`,
-  `org.omarchy.btop`, and `TUI.float`. A saved list gains whichever of those it is missing,
-  once, on the next launch. Classes already there, and older defaults the user removed, stay.
-  A class removed after that launch stays removed.
+  key-up (`send_key_state` on a Lua config, `sendkeystate` on a classic config). If the dispatch
+  fails, the text stays on the clipboard and the pill says so. The default terminal list includes
+  Omarchy's `org.omarchy.terminal`, `org.omarchy.bash`, `org.omarchy.btop`, and `TUI.float`. A
+  saved list gains whichever of those it is missing, once, on the next launch. Classes already
+  there, and older defaults the user removed, stay. A class removed after that launch stays
+  removed.
 - Escape on the meeting name prompt asks "Discard this recording?" before deleting it. Keep is
   focused, so Enter or Escape again returns to the name field with the typed name. Saving with an
   empty name, or closing the window another way, still uses the title Meeting. A prompt left open
   from an earlier meeting cannot save or discard the one that is waiting now.
-- The lockfile moves off the yanked async-executor 1.14.0 (a use-after-free in `Executor::drop`).
-  zbus accepts 1.14.1, which is what is pinned now (#63).
+
+Documentation
+- Shortcuts are described as Cmd+Å on macOS and Ctrl+Å on Linux. KDE's System Settings path is
+  no longer written as if it applied to every Linux desktop. The in-app Hyprland shortcut
+  fallback is Omarchy's `o.bind` in `~/.config/hypr/bindings.lua`. The specification, agent
+  notes, and the Linux window-behavior decision match the Lua rules file (`dofile` of
+  `hyprland.lua`, `hl.window_rule`) and the classic `source` of `hyprland.conf`.
+- Third-party notices are generated from the lockfile. CI fails if `THIRD_PARTY_NOTICES.md`
+  drifts. Building the UI checks needs Node 22.6 or newer.
+
+Caveat
+- Classic Hyprland hardware was not tested. The classic path is implemented (`sendkeystate`, and
+  `bind =` in `hyprland.conf`) and documented. Unit tests cover the Lua commands
+  (`hl.dsp.send_key_state`, `hyprland.lua`) and the `o.bind` hint. They are not a hardware run.
 
 ## 0.2.0 - 2026-10-31
 
